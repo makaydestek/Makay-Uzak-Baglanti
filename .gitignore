@@ -22,6 +22,9 @@ APK/*.log
 APK/build-*.txt
 APK/CURRENT.txt
 APK/APK-Hazirla-last.log
+# R8 obfuscation haritasi - yalnizca GitHub Release asset'i olarak gider,
+# depoda 25 MB yer kaplamasin (ayrica bakiniz tools/keystore-olustur.*)
+APK/*-mapping.txt
 
 # Keystores - never commit
 *.jks

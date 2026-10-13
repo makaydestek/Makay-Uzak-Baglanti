@@ -8,8 +8,9 @@ REM
 REM   1) Acik (commitlenmemis) degisiklikleri commit et
 REM   2) VERSION.txt surumunu artir
 REM   3) Release APK derle  -> APK\MakayRemote_vX.Y.Z.apk + .sha256
+REM      (+ APK\MakayRemote_vX.Y.Z-mapping.txt  R8 obfuscation haritasi)
 REM   4) Surum degisikligini commit et + depoya it (push)
-REM   5) GitHub Release olustur + APK/SHA yukle
+REM   5) GitHub Release olustur + APK/SHA/mapping yukle
 REM   6) Eski release'leri sil (yalnizca yeni surum kalir)
 REM
 REM  APK yalnizca %~dp0APK klasorunde birakilir; gradle
@@ -210,6 +211,11 @@ for %%A in ("!APK_TARGET!") do (
 set /a SIZE_KB=!SIZE_BYTES! / 1024
 echo  [OK] MakayRemote_v!VERSION!.apk  ^(!SIZE_KB! KB^)
 echo  [OK] MakayRemote_v!VERSION!.apk.sha256
+if exist "%APK_DIR%\MakayRemote_v!VERSION!-mapping.txt" (
+    echo  [OK] MakayRemote_v!VERSION!-mapping.txt  ^(R8 haritasi - release asset^)
+) else (
+    echo  [UYARI] mapping.txt yok - R8 haritasi olusturulmamis olabilir.
+)
 echo.
 
 REM ============================================================
@@ -273,18 +279,27 @@ if errorlevel 1 (
 set "TAG=!VERSION!"
 set "APK=!APK_TARGET!"
 set "SHA=!SHA_TARGET!"
+set "MAP=%APK_DIR%\MakayRemote_v!VERSION!-mapping.txt"
 
 gh release view "!TAG!" --repo %REPO% >nul 2>&1
 if errorlevel 1 (
     echo  Yeni release olusturuluyor...
     set "NOTES_FILE=%TEMP%\makay-remote-release-notes.txt"
     type nul > "!NOTES_FILE!"
-    gh release create "!TAG!" "!APK!" "!SHA!" --repo %REPO% --title "!VERSION!" --notes-file "!NOTES_FILE!"
+    if exist "!MAP!" (
+        gh release create "!TAG!" "!APK!" "!SHA!" "!MAP!" --repo %REPO% --title "!VERSION!" --notes-file "!NOTES_FILE!"
+    ) else (
+        gh release create "!TAG!" "!APK!" "!SHA!" --repo %REPO% --title "!VERSION!" --notes-file "!NOTES_FILE!"
+    )
     set "REL_ERR=!ERRORLEVEL!"
     del /q "!NOTES_FILE!" >nul 2>&1
 ) else (
     echo  Release !TAG! mevcut - assetler guncelleniyor...
-    gh release upload "!TAG!" "!APK!" "!SHA!" --repo %REPO% --clobber
+    if exist "!MAP!" (
+        gh release upload "!TAG!" "!APK!" "!SHA!" "!MAP!" --repo %REPO% --clobber
+    ) else (
+        gh release upload "!TAG!" "!APK!" "!SHA!" --repo %REPO% --clobber
+    )
     set "REL_ERR=!ERRORLEVEL!"
 )
 if not "!REL_ERR!"=="0" (

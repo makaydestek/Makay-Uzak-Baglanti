@@ -4,6 +4,7 @@ import android.util.Log
 import com.google.gson.Gson
 import com.makay.remote.core.Primitives
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.eclipse.paho.mqttv5.client.IMqttMessageListener
@@ -30,7 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *              wss://test.mosquitto.org:8081/mqtt
  *   - Yetki : her zarfta `pinHash` = SHA-256(oturum sifresi) eslesmeli
  */
-class MqttSignalClient {
+class MqttSignalClient(private val customBroker: String? = null) {
 
     fun interface Listener {
         fun onMessage(env: SignalEnvelope)
@@ -40,7 +41,7 @@ class MqttSignalClient {
         fun onClosed()
     }
 
-    private val gson = Gson()
+    private val gson = com.makay.remote.core.WireJson.gson
     private val clients = mutableListOf<MqttAsyncClient>()
     private val closed = AtomicBoolean(false)
 
@@ -81,7 +82,7 @@ class MqttSignalClient {
         var lastError: Exception? = null
         var connected: MqttAsyncClient? = null
 
-        for (broker in brokerList()) {
+        for (broker in buildBrokerList(customBroker)) {
             if (closed.get()) break
             val c = try {
                 connectOne(broker)
@@ -157,8 +158,12 @@ class MqttSignalClient {
         })
 
         val token = client.connect(options, null, actionListener)
+        /* `delay` zorunlu: `Thread.sleep` askiya alma noktasi degildir, bu yuzden
+           `withTimeoutOrNull` iptali hic gozlemleyemez ve broker hic yanit
+           vermezse dongu sonsuza kadar donerdi. `delay` ayni anda hem is parcigini
+           bosaltir hem timeout'un calismasini saglar. */
         withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
-            while (!token.isComplete) Thread.sleep(120)
+            while (!token.isComplete) delay(120)
         }
         if (!client.isConnected) {
             runCatching { client.close() }
@@ -227,7 +232,9 @@ class MqttSignalClient {
             if (!c.isConnected) continue
             try {
                 val token = c.publish(topic, raw, QOS, false, null, actionListener)
-                withTimeoutOrNull(PUBLISH_TIMEOUT_MS) { while (!token.isComplete) Thread.sleep(60) }
+                // `delay` — ayni gerekce: timeout'un iptali gozlemleyebilmesi icin
+                // askiya alma noktasi gerekiyor (bkz. connectOne).
+                withTimeoutOrNull(PUBLISH_TIMEOUT_MS) { while (!token.isComplete) delay(60) }
                 if (token.isComplete && token.exception == null) any = true
                 else lastError = token.exception
             } catch (e: Exception) {
@@ -267,6 +274,20 @@ class MqttSignalClient {
         fun topicFor(room: String): String =
             "makay/aio/v1/" + room.uppercase().filter { it in '0'..'9' || it in 'A'..'Z' }
 
-        private fun brokerList(): List<String> = DEFAULT_BROKERS
+        /**
+         * Denenecek broker sirasi.
+         *
+         * Kullanici Ayarlar'dan kendi broker'ini girdiyse ONE alinir, sonra
+         * halka acik yedekler denenir. Boylece ozel broker birincil olur ama
+         * erisilemezse baglanti yine kurulur (uygulamanin temel amaci).
+         * `wss://`/`ws://` semasi dogrulanir; gecersiz giris yok sayilir.
+         */
+        internal fun buildBrokerList(custom: String?): List<String> {
+            val cleaned = custom?.trim()?.trimEnd('/')
+                ?.takeIf { it.startsWith("wss://") || it.startsWith("ws://") }
+                ?: return DEFAULT_BROKERS
+            return if (DEFAULT_BROKERS.contains(cleaned)) DEFAULT_BROKERS
+            else listOf(cleaned) + DEFAULT_BROKERS
+        }
     }
 }

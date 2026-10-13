@@ -44,7 +44,9 @@ object RemoteGuard {
         if (v.isNaN() || v.isInfinite()) return null
         return when {
             v >= 0.0 && v <= 1.0 -> v
-            v <= 16000.0 -> Math.round(v).toDouble()
+            // Windows remote-guard.js sanitizeCoord ile birebir ayni: negatif
+            // koordinat da reddedilir (v >= 0 kosulu), 16000 ustunde duser.
+            v >= 0.0 && v <= 16000.0 -> Math.round(v).toDouble()
             else -> null
         }
     }

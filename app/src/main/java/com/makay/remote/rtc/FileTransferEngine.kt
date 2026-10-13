@@ -69,7 +69,7 @@ class FileTransferEngine {
         if (sep <= 0) return null
         val headJson = String(buf, 0, sep, Charsets.UTF_8)
         @Suppress("UNCHECKED_CAST")
-        val header = com.google.gson.Gson().fromJson(headJson, Map::class.java) as Map<String, Any>
+        val header = com.makay.remote.core.WireJson.gson.fromJson(headJson, Map::class.java) as Map<String, Any>
         val payload = buf.copyOfRange(sep + 1, buf.size)
         return header to payload
     }
@@ -232,7 +232,7 @@ class FileTransferEngine {
         if (size > 0) minOf(100, ((transferred * 100) / size).toInt()) else 100
 
     companion object {
-        private val gson = com.google.gson.Gson()
+        private val gson = com.makay.remote.core.WireJson.gson
         fun gsonOf(env: WireEnvelope): String = gson.toJson(env)
     }
 }

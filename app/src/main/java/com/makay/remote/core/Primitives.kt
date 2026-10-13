@@ -1,6 +1,5 @@
 package com.makay.remote.core
 
-import android.util.Base64
 import java.security.MessageDigest
 
 /**
@@ -23,16 +22,32 @@ object Primitives {
     /**
      * FNV-1a 32-bit kontrol toplami.
      *
-     * JS: `h = (h * 0x01000193) >>> 0` — carpim double'a dustugu icin
-     * Long ile hesaplanip dusuk 32 bit maskelenir; ayni sonucu verir.
-     * Girdi daima base64url (ASCII) oldugu icin `.code` UTF-16 birimiyle
-     * JS `charCodeAt` ile birebir ortusur.
+     * KRITIK: Masaustu `engine.js` bu islemi JAVASCRIPT `double` ile yapar:
+     * `h = (h * 0x01000193) >>> 0`. Carpim ~7.2e16'ya kadar cikar; JS'in tam
+     * integer siniri 2^53 (~9.0e15) oldugundan alt bitler bilincli olarak
+     * yuvarlanir. `Long` ile TAM hassasiyet hesaplamak baska sonuc verir ve
+     * Android'in urettigi SDP kodu masaustunde "Kod bozulmus" diye reddedilir.
+     *
+     * Bu yuzden carpim `Double` uzerinden yapilir, ardindan JS `>>> 0`
+     * (ToUint32: sifira dogru kirp + mod 2^32) taklit edilir. Cikti baytlari
+     * masaustuyla karakter duzeyinde ayni olmak ZORUNDADIR.
+     *
+     * Altin vektorler `engine.js`'ten uretilir (PrimitivesChecksumTest).
      */
     fun checksum32(input: String): String {
         var h = 0x811c9dc5L
         for (ch in input) {
-            h = h xor ch.code.toLong()
-            h = (h * 0x01000193L) and 0xFFFFFFFFL
+            // JS `h ^= c` — ToInt32 sonucu SIGNED int32 dondurur; alt 32 bit
+            // duzlemi XOR ile ayni oldugundan once maskeylenir, sonra signed'a cevrilir.
+            val bits = (h and 0xFFFFFFFFL) xor (ch.code.toLong() and 0xFFFFFFFFL)
+            val signed = if (bits >= 0x80000000L) bits - 0x100000000L else bits
+            // JS `h * 0x01000193` — ayni IEEE-754 double carpimi (kayipli).
+            // signed'lar ~2^55, uctsuzlar ~2^64 mertebesinde yuvarlanir;
+            // ikisini de ayni buyuklukte tutmadan sonuc farkli olur.
+            // (0x01000193 = 16777619; Kotlin hex ondalik literal kabul etmez)
+            val product = signed.toDouble() * 16777619.0
+            // JS `>>> 0` = ToUint32: sifira dogru kirp, sonra mod 2^32
+            h = product.toLong() and 0xFFFFFFFFL
         }
         var hex = java.lang.Long.toHexString(h)
         while (hex.length < 8) hex = "0$hex"
@@ -41,13 +56,13 @@ object Primitives {
 
     /** URL-safe base64, dolgusuz — `engine.js:bytesToBase64Url` ile ayni. */
     fun bytesToBase64Url(bytes: ByteArray): String =
-        Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+        java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 
     /** `engine.js:base64UrlToBytes` ile ayni. */
     fun base64UrlToBytes(b64: String): ByteArray {
         val normalized = b64.trim()
         return if (normalized.isEmpty()) ByteArray(0)
-        else Base64.decode(normalized, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+        else java.util.Base64.getUrlDecoder().decode(normalized)
     }
 
     /** Kucuk harf 64 haneli SHA-256 — `engine.js:sha256Hex` ile ayni. */

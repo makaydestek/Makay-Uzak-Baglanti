@@ -6,10 +6,11 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
-import com.google.gson.Gson
 import com.makay.remote.core.IceConfig
+import com.makay.remote.core.InviteParser
 import com.makay.remote.core.Primitives
 import com.makay.remote.core.RemoteGuard
+import com.makay.remote.core.WireJson
 import com.makay.remote.data.SettingsStore
 import com.makay.remote.rtc.ControlPayload
 import com.makay.remote.rtc.FileTransferEngine
@@ -60,7 +61,7 @@ import java.io.File
  */
 class SessionController(
     private val appContext: Context,
-    private val settings: SettingsStore,
+    val settings: SettingsStore,
     parentScope: CoroutineScope
 ) {
 
@@ -128,7 +129,7 @@ class SessionController(
 
     // ---------------- ic durum ----------------
 
-    private val gson = Gson()
+    private val gson = WireJson.gson
     private val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob())
 
     private var mqtt: MqttSignalClient? = null
@@ -159,7 +160,7 @@ class SessionController(
         val invite = Primitives.buildInviteText(code, pwd)
         _state.value = State.Hosting(code, pwd, invite)
 
-        val client = MqttSignalClient()
+        val client = MqttSignalClient(settings.mqttBroker.ifEmpty { null })
         mqtt = client
         try {
             client.subscribe(
@@ -244,7 +245,7 @@ class SessionController(
         password = pwd
         _state.value = State.Joining(code, pwd)
 
-        val client = MqttSignalClient()
+        val client = MqttSignalClient(settings.mqttBroker.ifEmpty { null })
         mqtt = client
         try {
             client.subscribe(
@@ -433,8 +434,18 @@ class SessionController(
         }
 
         override fun onControlRequest() {
-            _pendingControlRequest.value = peer?.peerName ?: "Karşı taraf"
-            _events.tryEmit(Event.ControlRequest(peer?.peerName ?: "Karşı taraf"))
+            val name = peer?.peerName ?: "Karşı taraf"
+            /* Ayarlar > "Kontrol izni zorunlu" kapaliysa istek otomatik onaylanir
+               (masaustu `requireControlApproval` ile ayni davranis). Varsayilan
+               TRUE'dur; yani varsayilan akis degismez. */
+            if (!settings.requireControlApproval) {
+                peer?.grantControl()
+                _controlState.value = ControlState.GRANTED
+                emitToast("Kontrol izni otomatik verildi ($name)", "info")
+                return
+            }
+            _pendingControlRequest.value = name
+            _events.tryEmit(Event.ControlRequest(name))
         }
 
         override fun onControlGranted() {
@@ -681,40 +692,18 @@ class SessionController(
     data class ParsedInvite(val code: String, val password: String)
 
     /**
-     * Windows `parseInvitePaste` ile AYNI kurallar:
-     *  1) "Kimlik: XXXX XXXX"
-     *  2) "Bağlantı/Davet Kodu: ..."
-     *  3) duz "XXXX XXXX" ya da "XXXXXXXX"
-     *  sifre: "Şifre:" / "Oturum Şifresi:" satiri
+     * Windows `parseInvitePaste` ile AYNI kurallar.
+     *
+     * Ayistirma mantigi saf `InviteParser` nesnesindedir (JVM test edilebilir);
+     * bu metot yalnizca ayni donus tipini koruyarak onu cagirir.
      */
-    fun parseInvite(raw: String): ParsedInvite {
-        val text = raw.trim()
-        var code = ""
-
-        KIMLIK_RE.find(text)?.let { code = it.groupValues[1] }
-        if (code.isEmpty()) KOD_RE.find(text)?.let { code = it.groupValues[1] }
-        if (code.isEmpty()) BARE_SPACED_RE.find(text)?.let { code = it.groupValues[1] }
-        if (code.isEmpty()) BARE_RE.find(text)?.let { code = it.groupValues[1] }
-
-        val clean = code.filter { it.isLetterOrDigit() }.uppercase().take(8)
-        val pwd = PASSWORD_RE.find(text)?.groupValues?.get(1)?.trim().orEmpty()
-        return ParsedInvite(clean, pwd)
-    }
+    fun parseInvite(raw: String): ParsedInvite =
+        InviteParser.parse(raw).let { ParsedInvite(it.code, it.password) }
 
     companion object {
         private const val TAG = "MakaySession"
         private const val JOIN_RETRY_MS = 2000L
         private const val JOIN_THROTTLE_MS = 1200L
         private const val CONNECT_TIMEOUT_MS = 35_000L
-
-        // Windows parseInvitePaste regexleri ile ayni anlam
-        private val KIMLIK_RE = Regex("Kimlik\\s*:?\\s*([0-9A-Za-z][0-9A-Za-z\\s\\-]{2,14})", RegexOption.IGNORE_CASE)
-        private val KOD_RE = Regex("(?:Bağlantı|Davet)\\s*Kodu\\s*:?\\s*([0-9A-Za-z][0-9A-Za-z\\s\\-]{2,14})", RegexOption.IGNORE_CASE)
-        private val BARE_SPACED_RE = Regex("\\b([0-9A-Z]{4}\\s*[0-9A-Z]{4})\\b", RegexOption.IGNORE_CASE)
-        private val BARE_RE = Regex("\\b([0-9A-Z]{8})\\b")
-        private val PASSWORD_RE = Regex(
-            "(?:Sifre|Şifre|Oturum\\s*[SsŞş]ifresi)\\s*:?\\s*([^\\r\\n]+)",
-            RegexOption.IGNORE_CASE
-        )
     }
 }

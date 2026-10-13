@@ -67,6 +67,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Yalnizca ARM cihaz hedefi: x86/x86_64 yalnizca emülatör/Chromebook'ta
+            // calisir ve tek dosya APK'yi ~23 MB buyutur. Debug'da tutulur ki
+            // emülatör testleri bozulmasin. (libjingle_peerconnection_so.so ~10 MB/mimari)
+            ndk {
+                abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+            }
             // Mevcut kurulumlar debug anahtariyla guncelleniyor. Uretim anahtari
             // local.properties'te yoksa bu zinciri kirmamak icin debug imza kalir.
             signingConfig = if (hasReleaseKey) {
@@ -170,6 +176,18 @@ tasks.register("publishReleaseApk") {
         }
         staging.copyTo(named, overwrite = true)
         staging.delete()
+
+        // R8 obfuscation haritasi — release APK'nin stack trace'leri buradan
+        // cozulebilir. APK ile ayni klasorde (surumli adla) ve GitHub Release
+        // asset'i olarak yayinlanir. Eski surumun haritasi dosya adinda
+        // oldugundan yeni yayinda kendiliginden degisir.
+        val mappingSrc = layout.buildDirectory.file("outputs/mapping/release/mapping.txt").get().asFile
+        val mappingOut = apkDir.resolve("MakayRemote_v$ver-mapping.txt")
+        if (mappingSrc.exists()) {
+            mappingSrc.copyTo(mappingOut, overwrite = true)
+        } else {
+            mappingOut.delete()
+        }
 
         val ps = listOf(
             "powershell", "-NoProfile", "-Command",

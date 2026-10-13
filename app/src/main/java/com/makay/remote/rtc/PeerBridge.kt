@@ -82,7 +82,7 @@ class PeerBridge(
     var listener: Listener? = null
     val files = FileTransferEngine()
 
-    private val gson = Gson()
+    private val gson = com.makay.remote.core.WireJson.gson
     private var factory: PeerConnectionFactory? = null
     private var audioDeviceModule: AudioDeviceModule? = null
     private var pc: PeerConnection? = null

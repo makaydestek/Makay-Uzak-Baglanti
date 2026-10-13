@@ -4,9 +4,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.makay.remote.data.SettingsStore
+import com.makay.remote.core.UpdateChecker
 import com.makay.remote.rtc.ControlPayload
 import com.makay.remote.rtc.FileTransferEngine
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
@@ -19,6 +21,12 @@ import java.io.File
 class SessionViewModel(app: Application) : AndroidViewModel(app) {
 
     val controller = SessionController(app, SettingsStore(app), viewModelScope)
+
+    /** Ayar deposu — Ayarlar ekranindan dogrudan okunur/yazilir. */
+    val settings = controller.settings
+
+    /** Ayarlar ekraninda aninda gorunmesi icin tema durumu. */
+    val themeMode = MutableStateFlow(settings.themeMode)
 
     val state = controller.state
     val chat = controller.chat
@@ -63,6 +71,28 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     fun sendFile(file: File, mime: String) = viewModelScope.launch { controller.sendFile(file, mime) }
 
     fun eglContext() = controller.eglContext()
+
+    /** Tema: "system" | "dark" | "light". */
+    fun setThemeMode(mode: String) {
+        settings.themeMode = mode
+        themeMode.value = mode
+    }
+
+    /**
+     * Uygulama ici guncelleme denetimi. Sonuc `null` ise guncelleme yoktur
+     * veya denetim basarisizdir (cevrimdisi olabilir) — her iki durumda da
+     * UI'da hicbir sey gosterilmez.
+     */
+    val updateInfo = MutableStateFlow<UpdateChecker.UpdateInfo?>(null)
+
+    fun checkForUpdate(force: Boolean = false) {
+        if (updateInfo.value != null) return // zaten gosteriliyor
+        viewModelScope.launch {
+            updateInfo.value = UpdateChecker.check(force = force)
+        }
+    }
+
+    fun dismissUpdate() { updateInfo.value = null }
 
     /** Ekran paylasimini durdurur (servisi kapatir). */
     fun stopScreenShare() {

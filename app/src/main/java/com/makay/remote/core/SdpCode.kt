@@ -18,7 +18,7 @@ import com.google.gson.annotations.SerializedName
  */
 object SdpCode {
 
-    private val gson = Gson()
+    private val gson = WireJson.gson
 
     private data class Payload(
         @SerializedName("sdp") val sdp: String? = null,

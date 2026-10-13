@@ -7,13 +7,16 @@ import com.makay.remote.BuildConfig
 /**
  * MAKAY Remote — kalici ayarlar ve cihaz kimligi.
  *
- * Masaustu Ayarlar penceresiyle ayni alanlar:
- *   - Tercih edilen baglanti kipi (internet / yerel ag)
- *   - Ayni ag eslesmesi (HTTP sinyal)
- *   - Sinyal sunucusu adresi
- *   - Yalnizca TURN / acik TURN yedek
+ * Masaustu Ayarlar penceresiyle ortak alanlar:
+ *   - Tema (system / dark / light)
+ *   - Cihaz adi
+ *   - Kontrol izni zorunlu mu
  *   - Ozel MQTT broker
+ *   - Yalnizca TURN / acik TURN yedek
  *   - TURN sunucu / kullanici / sifre
+ *
+ * Android'de masaustunun "ayni ag (LAN)" eslesmesi YOKTUR; burada bulut
+ * (MQTT) eslesmesi kullanilir. Bu yuzden LAN'a ait alanlar tanimlanmaz.
  */
 class SettingsStore(context: Context) {
 
@@ -21,6 +24,7 @@ class SettingsStore(context: Context) {
         context.getSharedPreferences("makay_remote", Context.MODE_PRIVATE)
 
     // ---------- gorunum ----------
+    /** "system" | "dark" | "light" — varsayilan koyu (masaustu Ayarlar ile ayni). */
     var themeMode: String
         get() = prefs.getString(KEY_THEME, "dark") ?: "dark"
         set(v) = prefs.edit().putString(KEY_THEME, v).apply()
@@ -32,24 +36,10 @@ class SettingsStore(context: Context) {
         set(v) = prefs.edit().putString(KEY_DEVICE_NAME, v).apply()
 
     // ---------- baglanti ----------
-    /** "internet" | "lan" */
-    var connMode: String
-        get() = prefs.getString(KEY_CONN_MODE, "internet") ?: "internet"
-        set(v) = prefs.edit().putString(KEY_CONN_MODE, v).apply()
-
-    /** Ayni Wi-Fi icin yerel HTTP sinyal sunucusu. */
-    var lanSignal: Boolean
-        get() = prefs.getBoolean(KEY_LAN_SIGNAL, false)
-        set(v) = prefs.edit().putBoolean(KEY_LAN_SIGNAL, v).apply()
-
-    /** Merkezi (internet) sinyal sunucusu. */
-    var internetSignalUrl: String
-        get() = prefs.getString(KEY_INTERNET_SIGNAL, "") ?: ""
-        set(v) = prefs.edit().putString(KEY_INTERNET_SIGNAL, v.trim().trimEnd('/')).apply()
-
-    var signalUrl: String
-        get() = prefs.getString(KEY_SIGNAL_URL, "http://127.0.0.1:3000") ?: "http://127.0.0.1:3000"
-        set(v) = prefs.edit().putString(KEY_SIGNAL_URL, v.trim().trimEnd('/')).apply()
+    // NOT: Masaustundaki "connMode / lanSignal / signalUrl / internetSignalUrl"
+    // alanlari Android'de BILINCLI olarak yoktur: Android her zaman bulut
+    // (MQTT) eslesmesi kullanir, ayni ag yerel HTTP sinyal sunucusu barindirmez.
+    // Bu yuzden o alanlar burada tutulmaz (oluk kod).
 
     // ---------- TURN / MQTT ----------
     var preferRelay: Boolean
@@ -101,10 +91,6 @@ class SettingsStore(context: Context) {
     companion object {
         private const val KEY_THEME = "theme"
         private const val KEY_DEVICE_NAME = "device_name"
-        private const val KEY_CONN_MODE = "conn_mode"
-        private const val KEY_LAN_SIGNAL = "lan_signal"
-        private const val KEY_INTERNET_SIGNAL = "internet_signal"
-        private const val KEY_SIGNAL_URL = "signal_url"
         private const val KEY_PREFER_RELAY = "prefer_relay"
         private const val KEY_PUBLIC_TURN = "public_turn"
         private const val KEY_MQTT_BROKER = "mqtt_broker"

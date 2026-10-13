@@ -2,6 +2,7 @@ package com.makay.remote.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -9,11 +10,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ScreenShare
 import androidx.compose.material.icons.filled.Computer
-import androidx.compose.material.icons.filled.ScreenShare
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -38,7 +41,8 @@ import com.makay.remote.ui.theme.MakayTheme
 @Composable
 fun JoinFormScreen(
     onHost: () -> Unit,
-    onJoin: (invite: String, password: String) -> Unit
+    onJoin: (invite: String, password: String) -> Unit,
+    onSettings: () -> Unit = {}
 ) {
     val c = MakayTheme.c
     var invite by remember { mutableStateOf("") }
@@ -51,11 +55,21 @@ fun JoinFormScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(
-            text = "MAKAY Uzaktan Bağlantı",
-            style = MaterialTheme.typography.headlineSmall,
-            color = c.text
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = "MAKAY Uzaktan Bağlantı",
+                style = MaterialTheme.typography.headlineSmall,
+                color = c.text
+            )
+            Spacer(Modifier.size(6.dp))
+            IconButton(onClick = onSettings, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Filled.Settings, contentDescription = "Ayarlar", tint = c.muted)
+            }
+        }
         Spacer(Modifier.height(4.dp))
         Text(
             text = "Sorun yaşayan bilgisayarı açın, teknisyen bağlanır",
@@ -74,7 +88,7 @@ fun JoinFormScreen(
                 .height(56.dp),
             colors = ButtonDefaults.buttonColors(containerColor = c.primary)
         ) {
-            Icon(Icons.Filled.ScreenShare, contentDescription = null, modifier = Modifier.size(20.dp))
+            Icon(Icons.AutoMirrored.Filled.ScreenShare, contentDescription = null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.size(8.dp))
             Text("Bağlantıya Aç", style = MaterialTheme.typography.titleMedium)
         }
