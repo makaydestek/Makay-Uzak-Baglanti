@@ -1,0 +1,5 @@
+# Betikler Windows cmd ile calisir: her satir CRLF olmali.
+*.bat text eol=crlf
+
+# PowerShell betikleri de Windows'ta CRLF bekler.
+*.ps1 text eol=crlf
