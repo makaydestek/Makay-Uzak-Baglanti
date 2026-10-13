@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 13+ tema simgesi (monochrome) icin yalniz glif.
+     Arkaplan/gradyan yok; sistem tek renk uygular. Glif adaptive
+     guvenli bolgeye (merkez 54,54 - yaricap 33) tam oturacak
+     olculerde tasarildi. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- ekran govdesi (kontur) -->
+    <path
+        android:pathData="M33.2,35 H62.8 A2.2,2.2 0 0 1 65,37.2 V53.8 A2.2,2.2 0 0 1 62.8,56 H33.2 A2.2,2.2 0 0 1 31,53.8 V37.2 A2.2,2.2 0 0 1 33.2,35 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- ekran ici -->
+    <path
+        android:pathData="M36.4,39.4 H59.6 A1,1 0 0 1 60.6,40.4 V50.6 A1,1 0 0 1 59.6,51.6 H36.4 A1,1 0 0 1 35.4,50.6 V40.4 A1,1 0 0 1 36.4,39.4 Z"
+        android:fillColor="#FFFFFFFF" />
+
+    <!-- ayak boyunu -->
+    <path
+        android:pathData="M46.8,56 H50.2 V61 H46.8 Z"
+        android:fillColor="#FFFFFFFF" />
+
+    <!-- ayak tabani -->
+    <path
+        android:pathData="M41.4,60.6 H55.6 A1.4,1.4 0 0 1 55.6,63.4 H41.4 A1.4,1.4 0 0 1 41.4,60.6 Z"
+        android:fillColor="#FFFFFFFF" />
+
+    <!-- sinyal kemikleri -->
+    <path
+        android:pathData="M63.39,34.52 A4.5,4.5 0 0 1 67.48,38.61
+                          M63.70,31.03 A8,8 0 0 1 70.97,38.30
+                          M64.00,27.54 A11.5,11.5 0 0 1 74.46,38.00"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3"
+        android:strokeLineCap="round" />
+</vector>

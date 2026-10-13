@@ -1,34 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- MAKAY Uzaktan Bağlantı — monitör + fiş (masaustu favicon.svg ile aynı) -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-
-    <!-- ekran govdesi -->
-    <path
-        android:pathData="M30,32 h48 a5,5 0 0 1 5,5 v24 a5,5 0 0 1 -5,5 h-48 a5,5 0 0 1 -5,-5 v-24 a5,5 0 0 1 5,-5 z"
-        android:fillColor="#FFFFFF"
-        android:fillAlpha="0.95" />
-
-    <!-- ekran ici -->
-    <path
-        android:pathData="M33,38 h42 a2,2 0 0 1 2,2 v16 a2,2 0 0 1 -2,2 h-42 a2,2 0 0 1 -2,-2 v-16 a2,2 0 0 1 2,-2 z"
-        android:fillColor="#10102A"
-        android:fillAlpha="0.85" />
-
-    <!-- ayak -->
-    <path
-        android:pathData="M48,66 h12 v5 h-12 z"
-        android:fillColor="#FFFFFF" />
-    <path
-        android:pathData="M39,71 h30 a2.5,2.5 0 0 1 0,5 h-30 a2.5,2.5 0 0 1 0,-5 z"
-        android:fillColor="#FFFFFF" />
-
-    <!-- fiş -->
-    <path
-        android:pathData="M46,12 l10,0 0,7 4,0 0,7 -6,6 -6,-6 0,-7 4,0 0,-7 z"
-        android:fillColor="#FFFFFF"
-        android:fillAlpha="0.9" />
-</vector>
+<!-- Makay Uzaktan Baglanti - adaptive icin on yuz.
+     Desen MakayCleaner ile ayni: tam kanama PNG ikon, %8 inset ile
+     adaptive guvenli bolgeye oturtulur. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_launcher_fg"
+    android:inset="8%" />
