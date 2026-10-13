@@ -36,7 +36,7 @@ if not errorlevel 1 (
   echo.
   gh auth status
   echo.
-  echo Artik GitHub-Release.bat calistirabilirsiniz.
+  echo Artik APK-Hazirla.bat calistirabilirsiniz.
   pause
   exit /b 0
 )
@@ -84,7 +84,7 @@ if errorlevel 1 (
 echo.
 gh auth status
 echo.
-echo [OK] Giris tamam. Simdi GitHub-Release.bat calistirabilirsiniz.
+echo [OK] Giris tamam. Simdi APK-Hazirla.bat calistirabilirsiniz.
 pause
 endlocal
 exit /b 0
