@@ -1,0 +1,78 @@
+package com.makay.remote.core
+
+/**
+ * MAKAY Remote — ICE sunucu yapilandirmasi.
+ * Masaustu `engine.js:parseIceServers` ile ayni davranis.
+ */
+object IceConfig {
+
+    val DEFAULT_STUN = listOf(
+        "stun:stun.l.google.com:19302",
+        "stun:stun1.l.google.com:19302",
+        "stun:stun2.l.google.com:19302",
+        "stun:stun3.l.google.com:19302",
+        "stun:stun4.l.google.com:19302",
+        "stun:stun.cloudflare.com:3478"
+    )
+
+    /** Yedek acik TURN — bilincli olarak `includeDefaultTurn` ile eklenir. */
+    private val DEFAULT_TURN_URLS = listOf(
+        "turn:openrelay.metered.ca:80",
+        "turn:openrelay.metered.ca:443",
+        "turn:openrelay.metered.ca:443?transport=tcp",
+        "turns:openrelay.metered.ca:443?transport=tcp"
+    )
+    private const val DEFAULT_TURN_USER = "openrelayproject"
+    private const val DEFAULT_TURN_PASS = "openrelayproject"
+
+    data class Server(
+        val urls: List<String>,
+        val username: String? = null,
+        val credential: String? = null
+    )
+
+    /**
+     * @param turnUrl virgulle ayrilmis bir veya birden fazla TURN adresi
+     * @param includeDefaultTurn yalnizca kullanici ayarlardan aciksa true
+     */
+    fun parse(
+        turnUrl: String? = null,
+        turnUsername: String? = null,
+        turnPassword: String? = null,
+        includeDefaultTurn: Boolean = false
+    ): List<Server> {
+        val out = ArrayList<Server>()
+        DEFAULT_STUN.forEach { out.add(Server(listOf(it))) }
+
+        var hasTurn = false
+        val raw = turnUrl?.trim().orEmpty()
+        if (raw.isNotEmpty()) {
+            var urls = if (raw.contains(',')) {
+                raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            } else {
+                listOf(raw)
+            }
+            // `turn:host:port` -> otomatik `turns:...tcp` yedegi ekle
+            if (urls.size == 1 &&
+                urls[0].startsWith("turn:", ignoreCase = true) &&
+                !urls[0].contains("?transport=")
+            ) {
+                val base = urls[0]
+                urls = listOf(base, base.replaceFirst("turn:", "turns:") + "?transport=tcp")
+            }
+            out.add(
+                Server(
+                    urls = urls,
+                    username = turnUsername?.takeIf { it.isNotBlank() },
+                    credential = turnPassword?.takeIf { it.isNotBlank() }
+                )
+            )
+            hasTurn = true
+        }
+
+        if (!hasTurn && includeDefaultTurn) {
+            out.add(Server(DEFAULT_TURN_URLS, DEFAULT_TURN_USER, DEFAULT_TURN_PASS))
+        }
+        return out
+    }
+}

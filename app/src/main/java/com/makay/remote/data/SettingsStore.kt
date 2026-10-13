@@ -1,0 +1,120 @@
+package com.makay.remote.data
+
+import android.content.Context
+import android.content.SharedPreferences
+import com.makay.remote.BuildConfig
+
+/**
+ * MAKAY Remote — kalici ayarlar ve cihaz kimligi.
+ *
+ * Masaustu Ayarlar penceresiyle ayni alanlar:
+ *   - Tercih edilen baglanti kipi (internet / yerel ag)
+ *   - Ayni ag eslesmesi (HTTP sinyal)
+ *   - Sinyal sunucusu adresi
+ *   - Yalnizca TURN / acik TURN yedek
+ *   - Ozel MQTT broker
+ *   - TURN sunucu / kullanici / sifre
+ */
+class SettingsStore(context: Context) {
+
+    private val prefs: SharedPreferences =
+        context.getSharedPreferences("makay_remote", Context.MODE_PRIVATE)
+
+    // ---------- gorunum ----------
+    var themeMode: String
+        get() = prefs.getString(KEY_THEME, "dark") ?: "dark"
+        set(v) = prefs.edit().putString(KEY_THEME, v).apply()
+
+    // ---------- cihaz ----------
+    /** Bu cihazin goruntulenecek adi. */
+    var deviceName: String
+        get() = prefs.getString(KEY_DEVICE_NAME, defaultDeviceName()) ?: defaultDeviceName()
+        set(v) = prefs.edit().putString(KEY_DEVICE_NAME, v).apply()
+
+    // ---------- baglanti ----------
+    /** "internet" | "lan" */
+    var connMode: String
+        get() = prefs.getString(KEY_CONN_MODE, "internet") ?: "internet"
+        set(v) = prefs.edit().putString(KEY_CONN_MODE, v).apply()
+
+    /** Ayni Wi-Fi icin yerel HTTP sinyal sunucusu. */
+    var lanSignal: Boolean
+        get() = prefs.getBoolean(KEY_LAN_SIGNAL, false)
+        set(v) = prefs.edit().putBoolean(KEY_LAN_SIGNAL, v).apply()
+
+    /** Merkezi (internet) sinyal sunucusu. */
+    var internetSignalUrl: String
+        get() = prefs.getString(KEY_INTERNET_SIGNAL, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_INTERNET_SIGNAL, v.trim().trimEnd('/')).apply()
+
+    var signalUrl: String
+        get() = prefs.getString(KEY_SIGNAL_URL, "http://127.0.0.1:3000") ?: "http://127.0.0.1:3000"
+        set(v) = prefs.edit().putString(KEY_SIGNAL_URL, v.trim().trimEnd('/')).apply()
+
+    // ---------- TURN / MQTT ----------
+    var preferRelay: Boolean
+        get() = prefs.getBoolean(KEY_PREFER_RELAY, false)
+        set(v) = prefs.edit().putBoolean(KEY_PREFER_RELAY, v).apply()
+
+    var publicTurnFallback: Boolean
+        get() = prefs.getBoolean(KEY_PUBLIC_TURN, false)
+        set(v) = prefs.edit().putBoolean(KEY_PUBLIC_TURN, v).apply()
+
+    var mqttBroker: String
+        get() = prefs.getString(KEY_MQTT_BROKER, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_MQTT_BROKER, v.trim()).apply()
+
+    var turnUrl: String
+        get() = prefs.getString(KEY_TURN_URL, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_TURN_URL, v.trim()).apply()
+
+    var turnUser: String
+        get() = prefs.getString(KEY_TURN_USER, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_TURN_USER, v.trim()).apply()
+
+    var turnPass: String
+        get() = prefs.getString(KEY_TURN_PASS, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_TURN_PASS, v).apply()
+
+    // ---------- guvenlik ----------
+    /** Kontrol izni zorunlu (masaustu `requireControlApproval`). */
+    var requireControlApproval: Boolean
+        get() = prefs.getBoolean(KEY_REQUIRE_APPROVAL, true)
+        set(v) = prefs.edit().putBoolean(KEY_REQUIRE_APPROVAL, v).apply()
+
+    // ---------- oturum hafizasi ----------
+    var lastRoom: String
+        get() = prefs.getString(KEY_LAST_ROOM, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_LAST_ROOM, v).apply()
+
+    var lastPassword: String
+        get() = prefs.getString(KEY_LAST_PASSWORD, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_LAST_PASSWORD, v).apply()
+
+    fun clearSession() {
+        prefs.edit().remove(KEY_LAST_ROOM).remove(KEY_LAST_PASSWORD).apply()
+    }
+
+    private fun defaultDeviceName(): String = "${android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${android.os.Build.MODEL}"
+        .take(40)
+
+    companion object {
+        private const val KEY_THEME = "theme"
+        private const val KEY_DEVICE_NAME = "device_name"
+        private const val KEY_CONN_MODE = "conn_mode"
+        private const val KEY_LAN_SIGNAL = "lan_signal"
+        private const val KEY_INTERNET_SIGNAL = "internet_signal"
+        private const val KEY_SIGNAL_URL = "signal_url"
+        private const val KEY_PREFER_RELAY = "prefer_relay"
+        private const val KEY_PUBLIC_TURN = "public_turn"
+        private const val KEY_MQTT_BROKER = "mqtt_broker"
+        private const val KEY_TURN_URL = "turn_url"
+        private const val KEY_TURN_USER = "turn_user"
+        private const val KEY_TURN_PASS = "turn_pass"
+        private const val KEY_REQUIRE_APPROVAL = "require_control_approval"
+        private const val KEY_LAST_ROOM = "last_room"
+        private const val KEY_LAST_PASSWORD = "last_password"
+
+        fun versionName(): String = BuildConfig.VERSION_NAME
+    }
+}

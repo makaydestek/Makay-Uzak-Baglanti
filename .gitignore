@@ -1,0 +1,28 @@
+# Built application files
+*.apk
+*.apk.sha256
+*.ap_
+*.aab
+
+# Gradle / IDE
+.gradle/
+build/
+**/build/
+local.properties
+*.iml
+.idea/
+.cxx/
+captures/
+.externalNativeBuild/
+*.hprof
+.DS_Store
+*.log
+.kotlin/
+APK/*.log
+APK/build-*.txt
+APK/CURRENT.txt
+APK/APK-Hazirla-last.log
+
+# Keystores - never commit
+*.jks
+*.keystore
