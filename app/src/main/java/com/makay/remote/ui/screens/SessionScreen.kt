@@ -91,13 +91,10 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
     val c = MakayTheme.c
     val chat by vm.chat.collectAsState()
     val controlState by vm.controlState.collectAsState()
-    val pendingRequest by vm.pendingControlRequest.collectAsState()
     val remoteVideo by vm.remoteVideo.collectAsState()
     val context = LocalContext.current
 
-    // --- pano / ses / uzak kontrol durumlari ---
-    val peerControlActive by vm.peerControlActive.collectAsState()
-    val remoteControlOn by vm.remoteControlAvailable.collectAsState()
+    // --- pano / ses durumlari ---
     val inboundClip by vm.inboundClipboard.collectAsState()
     val micOn by vm.micState.collectAsState()
     val speakerOn by vm.speakerOn.collectAsState()
@@ -315,33 +312,6 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
             }
         }
 
-        // ---- Erisilebilirlik uyariisi: karsi taraf bizi kontrol edecek ama servis kapali ----
-        if (!remoteControlOn && (peerControlActive || pendingRequest != null)) {
-            Spacer(Modifier.height(8.dp))
-            Surface(
-                color = c.warn.copy(alpha = 0.18f),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Filled.Warning, null, Modifier.size(18.dp), tint = c.warn)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "Bilgisayar sizi kontrol etmek istiyor, ancak uzak kontrol servisi kapalı.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.text,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = { vm.openAccessibilitySettings(context) }) {
-                        Text("Servisi Aç", color = c.accent)
-                    }
-                }
-            }
-        }
-
         Spacer(Modifier.height(8.dp))
 
         // ---------- sohbet ----------
@@ -386,30 +356,6 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Gönder")
             }
         }
-    }
-
-    // ---------- gelen kontrol istemi (host) ----------
-    if (asHost && pendingRequest != null) {
-        AlertDialog(
-            onDismissRequest = { },
-            containerColor = c.bg2,
-            title = { Text("Kontrol isteği", color = c.text) },
-            text = {
-                Text(
-                    "«$pendingRequest» bu cihazı uzaktan kontrol etmek istiyor.",
-                    color = c.text
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = { vm.grantControl() },
-                    colors = ButtonDefaults.buttonColors(containerColor = c.success)
-                ) { Text("İzin Ver") }
-            },
-            dismissButton = {
-                TextButton(onClick = { vm.denyControl() }) { Text("Reddet", color = c.danger) }
-            }
-        )
     }
 
     // ---------- gelen pano onayi (masaustu clipModal karsiligi) ----------

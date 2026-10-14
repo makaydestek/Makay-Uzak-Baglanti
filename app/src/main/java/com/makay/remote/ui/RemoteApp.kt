@@ -93,7 +93,6 @@ fun RemoteApp(vm: SessionViewModel) {
                         SettingsScreen(
                             deviceName = vm.settings.deviceName,
                             themeMode = vm.themeMode.collectAsState().value,
-                            requireControlApproval = vm.settings.requireControlApproval,
                             mqttBroker = vm.settings.mqttBroker,
                             publicTurnFallback = vm.settings.publicTurnFallback,
                             preferRelay = vm.settings.preferRelay,
@@ -102,7 +101,6 @@ fun RemoteApp(vm: SessionViewModel) {
                             turnPass = vm.settings.turnPass,
                             onDeviceName = { vm.settings.deviceName = it },
                             onThemeMode = { vm.setThemeMode(it) },
-                            onRequireControlApproval = { vm.settings.requireControlApproval = it },
                             onMqttBroker = { vm.settings.mqttBroker = it },
                             onPublicTurnFallback = { vm.settings.publicTurnFallback = it },
                             onPreferRelay = { vm.settings.preferRelay = it },

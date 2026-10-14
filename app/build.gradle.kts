@@ -86,31 +86,6 @@ android {
             isMinifyEnabled = false
             isShrinkResources = false
         }
-
-        // Windows -> Android YONUNDE uzak kontrol varyanti.
-        //
-        // Bu tip AccessibilityService BILDIRIR; varsayilan `release` BILDIRMEZ.
-        // NEDEN AYRI: Google Play Protect, yandan yükleme (sideload) yapilan ve
-        // AccessibilityService bildiren uygulamalari TAMAMEN ENGLIYOR — yalnizca
-        // "uyari + Yine de kur" degil, kurulum yapilamiyor. Eko sistemin diger
-        // uygulamalarinda accessibility servisi oldugu icin onlar uyarida kalir.
-        //
-        // `release` her seydenOnce gelir: ekran paylasimi, dosya, sohbet, pano,
-        // mikrofon/hoparlor VE Android -> Windows uzak kontrol (ana destek
-        // senaryosu) bu varyantta da calisir. Yalnizca Windows -> Android
-        // kontrol eksiktir, cunku Android girdi enjeksiyonu icin yalnizca
-        // AccessibilityService'e izin verir.
-        //
-        // uretim: gradlew assembleKontrolRelease
-        create("kontrol") {
-            initWith(getByName("release"))
-            // `initWith` tum uygulama ozelliklerini kopyalamaz (ornegin kaynak
-            // budamayi). release ile BIREBIR ayni davranmasi icin acikca yazilir:
-            // aksi halde kontrol APK'si ~0.4 MB buyur ve budama farkli calisir.
-            isMinifyEnabled = true
-            isShrinkResources = true
-            matchingFallbacks += "release"
-        }
     }
 
     compileOptions {
@@ -199,28 +174,21 @@ fun sha256Hex(f: java.io.File): String {
 
 tasks.register("publishReleaseApk") {
     group = "distribution"
-    description = "Temel + kontrol APK'larini, SHA-256'larini ve R8 haritalarini yalnizca APK/ klasorune yazar"
-    // `assembleRelease` bu gorevi finalize eder; buradan kontrol varyanti da
-    // istenir — tek komut iki APK'yi de uretir. (Tersi dongu olustururdu.)
-    dependsOn("assembleKontrol")
+    description = "Release APK'yi, SHA-256'sini ve R8 haritasini yalnizca APK/ klasorune yazar"
     doLast {
         val apkDir = rootProject.layout.projectDirectory.dir("APK").asFile
         apkDir.mkdirs()
         val ver = rootProject.file("VERSION.txt").readText().trim()
 
         // (hedef ad, ham APK, R8 haritasi)
-        //   TEMEL   : Play Protect engellemez; Android -> Windows kontrol dahil her sey calisir.
-        //   KONTROL : Windows -> Android kontrol (AccessibilityService); yandan yüklemede uyarir.
+        // Uygulama TEK APK olarak teslim edilir: paket hicbir ozel izin
+        // (AccessibilitService dahil) bildirmez, bu yuzden yandan yuklemede
+        // Play Protect ayni Makay uygulamalari gibi sorunsuz kurar.
         val items = listOf(
             Triple(
                 "MakayRemote_v$ver.apk",
                 layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile,
                 layout.buildDirectory.file("outputs/mapping/release/mapping.txt").get().asFile
-            ),
-            Triple(
-                "MakayRemote_v$ver-kontrol.apk",
-                layout.buildDirectory.file("outputs/apk/kontrol/app-kontrol.apk").get().asFile,
-                layout.buildDirectory.file("outputs/mapping/kontrol/mapping.txt").get().asFile
             )
         )
         items.forEach { (_, src, _) ->

@@ -39,7 +39,6 @@ import com.makay.remote.ui.theme.MakayTheme
  * Burada tanimlanan TUM alanlar gercekten kullanilir:
  *   - deviceName             -> hello zarfinda `name`
  *   - themeMode              -> MainActivity'de `MakayTheme(dark=...)`
- *   - requireControlApproval -> kontrol isteginde otomatik/onayli akis
  *   - mqttBroker             -> MqttSignalClient broker sirasi (one alinir)
  *   - publicTurnFallback / preferRelay / turn* -> ICE sunucu yapilandirmasi
  *
@@ -50,7 +49,6 @@ import com.makay.remote.ui.theme.MakayTheme
 fun SettingsScreen(
     deviceName: String,
     themeMode: String,
-    requireControlApproval: Boolean,
     mqttBroker: String,
     publicTurnFallback: Boolean,
     preferRelay: Boolean,
@@ -59,7 +57,6 @@ fun SettingsScreen(
     turnPass: String,
     onDeviceName: (String) -> Unit,
     onThemeMode: (String) -> Unit,
-    onRequireControlApproval: (Boolean) -> Unit,
     onMqttBroker: (String) -> Unit,
     onPublicTurnFallback: (Boolean) -> Unit,
     onPreferRelay: (Boolean) -> Unit,
@@ -110,19 +107,6 @@ fun SettingsScreen(
             ThemeChip("Koyu", themeMode == "dark", Modifier.weight(1f), c) { onThemeMode("dark") }
             ThemeChip("Açık", themeMode == "light", Modifier.weight(1f), c) { onThemeMode("light") }
         }
-
-        Spacer(Modifier.height(24.dp))
-
-        // ---------- Guvenlik ----------
-        SectionTitle("Güvenlik")
-
-        SwitchRow(
-            title = "Kontrol izni zorunlu",
-            subtitle = "Kapalıyken teknisyenin kontrol isteği otomatik onaylanır",
-            checked = requireControlApproval,
-            onCheckedChange = onRequireControlApproval,
-            c = c
-        )
 
         Spacer(Modifier.height(24.dp))
 

@@ -24,9 +24,11 @@ class RemoteGuardTest {
     /**
      * KRITIK: koordinatsiz `mousedown`/`mouseup` KABUL EDILIR.
      *
-     * `RemoteControlService` icin bu hayati onemdedir — bu degerler dusseydi
-     * tiklama planlamasi (`ControlPlanner`) hic mouseup gormez ve DOKUNMALAR
-     * HICBIR ZAMAN CALISMAZDI.
+     * `mouseup` her zaman bir `mousedown`'IN ESLESMESI olmak zorunda
+     * degildir: CIKIS yonunda (Android -> Windows) `SessionScreen`
+     * surukleme sonunda x/y IÇERMEYEN bir `MOUSE_UP` gonderir. Bu degerler
+     * dusseydi olay `RemoteGuard` tarafindan dusurulur ve suruklemeler
+     * hicbir zaman tamamlanmazdi.
      */
     @Test
     fun buttonEvents_withoutCoordinates_areAccepted() {
@@ -85,7 +87,7 @@ class RemoteGuardTest {
 
     // ---------------- tekerlek ----------------
 
-    /** Masaustu delta SINIRLAMAZ; bu sinir ±40'a kisitlar (ControlPlanner ile ayni). */
+    /** Masaustu delta SINIRLAMAZ; bu sinir ±40'a kisitlar. */
     @Test
     fun wheel_isClampedToForty() {
         val big = RemoteGuard.sanitizeControl("wheel", null, null, null, 5000, null)

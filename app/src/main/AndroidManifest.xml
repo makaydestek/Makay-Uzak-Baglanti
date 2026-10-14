@@ -77,15 +77,17 @@
             android:foregroundServiceType="mediaProjection" />
 
         <!--
-          BILGI: Windows -> Android YONUNDE uzak kontrol (AccessibilityService)
-          BURADA DEGIL, yalnizca `kontrol` derleme tipinde tanimlidir.
+          BILGI: Windows -> Android YONUNDE uzak kontrol YOKTUR ve bilincli
+          olarak kaldirilmistir.
 
           NEDEN: Google Play Protect, yandan yükleme (sideload) yapilan ve
           AccessibilityService BILDIREN uygulamalari tamamen engelliyor
           ("uyari + Yine de kur" degil, kurulum yapilamiyor). Eko sistemin diger
           uygulamalarinda accessibility servisi olmadigi icin onlar yalnizca
-          uyarida kalir. `gradlew assembleKontrolRelease` ile bu servisi iceren
-          varyanti uretebilirsiniz (bkz. README).
+          uyarida kalir. Bu uygulama TAMAMEN engelleniyordu; bu yon bu nedenle
+          tamamen kaldirildi. Uygulama simdi yalnizca ANDROID -> WINDOWS
+          yonunu destekler: bu cihaz ekranini paylasir ve bilgisayari
+          dokunarak kontrol eder. Bu yonde hicbir ozel izin gerekmez.
         -->
 
     </application>

@@ -7,7 +7,6 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
-import com.makay.remote.control.RemoteControlService
 import com.makay.remote.core.IceConfig
 import com.makay.remote.core.InviteParser
 import com.makay.remote.core.Primitives
@@ -92,11 +91,9 @@ class SessionController(
 
     data class ChatMessage(val text: String, val mine: Boolean, val ts: Long)
 
-    /** Tek seferlik olaylar (toast / kontrol istemi / dosya). */
+    /** Tek seferlik olaylar (toast / dosya). */
     sealed class Event {
         data class Toast(val message: String, val kind: String = "info") : Event()
-        /** Karsi tarafin bize kontrol istedigi (host tarafinda onay dialogu). */
-        data class ControlRequest(val from: String) : Event()
         /** Karsi tarafa gonderilen dosya tamamlandi. */
         data class FileSent(val name: String) : Event()
         /** Gelen dosya indirildi. */
@@ -120,22 +117,11 @@ class SessionController(
     private val _controlState = MutableStateFlow(ControlState.NONE)
     val controlState: StateFlow<ControlState> = _controlState.asStateFlow()
 
-    private val _pendingControlRequest = MutableStateFlow<String?>(null)
-    val pendingControlRequest: StateFlow<String?> = _pendingControlRequest.asStateFlow()
-
     private val _remoteVideo = MutableStateFlow<VideoTrack?>(null)
     val remoteVideo: StateFlow<VideoTrack?> = _remoteVideo.asStateFlow()
 
     private val _remoteAudio = MutableStateFlow<AudioTrack?>(null)
     val remoteAudio: StateFlow<AudioTrack?> = _remoteAudio.asStateFlow()
-
-    /**
-     * Windows -> Android YONUNDE karsi tarafin bizi kontrol edip edemedigi.
-     * `_controlState` bu isin ters yonunu (bizim kontrol istemimiz) tutar;
-     * ikisini ayirmak, gelen olaylarin izinsiz uygulanmasini engeller.
-     */
-    private val _peerControlActive = MutableStateFlow(false)
-    val peerControlActive: StateFlow<Boolean> = _peerControlActive.asStateFlow()
 
     /** Karsi taraftan gelen pano metni; UI onay verince yazilir/silinir. */
     private val _inboundClipboard = MutableStateFlow<String?>(null)
@@ -459,21 +445,22 @@ class SessionController(
             _chat.update { it + ChatMessage(text, mine = false, ts = ts) }
         }
 
+        /**
+         * Windows -> Android KONTROL YONU KALDIRILDI.
+         *
+         * Bu surum yalnizca Android -> Windows yonunu destekler: bu cihaz
+         * ekranini paylasir (izlenir) ve KARSI tarafin bilgisayarini kontrol
+         * eder. Karşı tarafin bizi kontrol etmesi icin yalnizca
+         * AccessibilityService gider — Android girdi enjeksiyonuna baska yol
+         * tanimaz — ve Google, yandan yuklemede accessibility servisi bildiren
+         * uygulamalari Play Protect ile kurulmasina kadar ENGELLIYOR.
+         * Bu yuzden istek otomatik reddedilir; masaustu taraf `ctrl-deny`
+         * alip kendi arayuzunde net bir bilgi gosterir.
+         */
         override fun onControlRequest() {
             val name = peer?.peerName ?: "Karşı taraf"
-            /* Ayarlar > "Kontrol izni zorunlu" kapaliysa istek otomatik onaylanir
-               (masaustu `requireControlApproval` ile ayni davranis). Varsayilan
-               TRUE'dur; yani varsayilan akis degismez. */
-            if (!settings.requireControlApproval) {
-                peer?.grantControl()
-                _controlState.value = ControlState.GRANTED
-                _peerControlActive.value = true
-                warnIfControlServiceOff()
-                emitToast("Kontrol izni otomatik verildi ($name)", "info")
-                return
-            }
-            _pendingControlRequest.value = name
-            _events.tryEmit(Event.ControlRequest(name))
+            peer?.denyControl()
+            emitToast("Bu sürümde karşı tarafın sizi kontrol etmesi desteklenmiyor ($name)", "info")
         }
 
         override fun onControlGranted() {
@@ -487,36 +474,16 @@ class SessionController(
         }
 
         override fun onControlStopped() {
-            _peerControlActive.value = false
             if (_controlState.value == ControlState.GRANTED) {
                 _controlState.value = ControlState.NONE
                 emitToast("Kontrol sonlandırıldı", "info")
             }
         }
 
-        /**
-         * Karsi taraftan gelen fare/klavye olayi — Windows -> Android yonu.
-         *
-         * Bu override ONCESINDE yoktu: arayuzun bos govdesi (`fun onControl(ev) {}`)
-         * nedeniyle olaylar sessizce yutuluyordu, yani kullanici "Kontrol izni
-         * verildi" bildirimini gormesine ragmen hicbir sey olmuyordu.
-         */
-        override fun onControl(ev: ControlPayload) {
-            // Yalnizca izin verilmisken uygula (izin geri alinmissa olay duser)
-            if (!_peerControlActive.value) return
-            /* GELEN YONDE DE tel siniri calisir — cunku artik bu yol TELEFONU
-               uzaktan kontrol eder. Masaustu ile AYNI sinirlar uygulanir:
-               koordinat 0..1, tekerlek ±40, tus adi 1-32 karakter ve JSON
-               ayraci icermemeli. Boylece asiri koordinat / tanimsiz tus ile
-               oynamak mumkun degildir. (Bu sinir daha once yalnizca CIKISTA
-               `sendControl` uzerinden calisiyordu.) */
-            val clean = sanitize(ev)
-            if (clean == null) {
-                Log.w(TAG, "Gelen ctrl olayi RemoteGuard tarafindan dusuruldu: ${ev.type}")
-                return
-            }
-            if (!RemoteControlService.apply(clean)) warnIfControlServiceOff()
-        }
+        /* Gelen `ctrl` olaylari (Windows -> Android) icin override bilincli
+           olarak YOK: `PeerBridge` arayuzunun bos govdesi olaylari yutuyor.
+           Bu yon kaldirildi — girdi enjeksiyonu yalnizca AccessibilityService
+           ile mumkun, o da yandan yuklemede Play Protect tarafindan engelleniyor. */
 
         override fun onClipboard(text: String) {
             // Masaustu `onClipboard` ile AYNI davranis: dogrudan yazilmaz,
@@ -590,22 +557,27 @@ class SessionController(
         return fid
     }
 
+    /**
+     * Kontrol iste — Android -> Windows yonu (biz odaya KATILAN tarafiz).
+     *
+     * MASAUSTU HER ZAMAN IZIN VERIR: odayi acan (offerer) baglanir baglanmaz
+     * `control.sharer = true` yapar (app.js:876); gelen `ctrl-req` icin onay
+     * modalini ACMAZ ve `ctrl-ok` GONDERMEZ (app.js `onControlRequest`:
+     * `if (control.pending || control.sharer) return`). Yani istek tek
+     * yonludur; yetki hicbir zaman bize geri donmez.
+     *
+     * Bu yuzden `REQUESTED`'da BEKLENECEGINE yetki aninda bize gecer. Aksi
+     * halde arayuz sonsuza dek "Onay Bekleniyor…" gosterir ve dokunma
+     * katmani (`controlEnabled = state == GRANTED`) hic kurulmaz — yani
+     * Android bilgisayari hic kontrol edemezdi. Tasarim da bunu istiyor:
+     * "teknisyen hicbir 'Kontrol iste / Izin ver' adimi olmadan dogrudan
+     * yonetsin" (app.js:874).
+     */
     fun requestControl() {
         val p = peer ?: return
-        if (p.requestControl()) _controlState.value = ControlState.REQUESTED
-    }
-
-    fun grantControl() {
-        _pendingControlRequest.value = null
-        peer?.grantControl()
-        _peerControlActive.value = true
-        warnIfControlServiceOff()
-    }
-
-    fun denyControl() {
-        _pendingControlRequest.value = null
-        peer?.denyControl()
-        _peerControlActive.value = false
+        if (!p.requestControl()) return
+        _controlState.value = ControlState.GRANTED
+        emitToast("Kontrol etkin — ekrana dokunarak bilgisayarı yönetin", "success")
     }
 
     fun stopControl() {
@@ -777,12 +749,9 @@ class SessionController(
         lastJoinRequestAt = 0L
         _chat.value = emptyList()
         _controlState.value = ControlState.NONE
-        _peerControlActive.value = false
-        _pendingControlRequest.value = null
         _inboundClipboard.value = null
         _peerMicState.value = null
         _micState.value = false
-        controlServiceWarned.set(false)
         _remoteVideo.value = null
         _remoteAudio.value = null
         if (_state.value !is State.Failed) _state.value = State.Idle
@@ -807,22 +776,6 @@ class SessionController(
 
     private fun emitToast(message: String, kind: String) {
         _events.tryEmit(Event.Toast(message, kind))
-    }
-
-    private val controlServiceWarned = java.util.concurrent.atomic.AtomicBoolean(false)
-
-    /**
-     * Kullanicinin Erisilebilirlik servisini ACMADIGINI bir kez soyleyir.
-     * Servis kapaliyken gelen kontrol olaylari uygulanamaz (sessizce yutulmaz,
-     * bilincli olarak birakilir) — ama kullanci bunu bilmelidir.
-     */
-    private fun warnIfControlServiceOff() {
-        if (RemoteControlService.isAvailable()) return
-        if (!controlServiceWarned.compareAndSet(false, true)) return
-        emitToast(
-            "Uzaktan kontrol kapalı — Ayarlar → Erişilebilirlik → «MAKAY Uzak Kontrol»ü açın",
-            "warning"
-        )
     }
 
     private fun saveToDownloads(name: String, mime: String, bytes: ByteArray): Uri? =

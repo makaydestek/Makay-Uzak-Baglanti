@@ -66,12 +66,6 @@ class SettingsStore(context: Context) {
         get() = prefs.getString(KEY_TURN_PASS, "") ?: ""
         set(v) = prefs.edit().putString(KEY_TURN_PASS, v).apply()
 
-    // ---------- guvenlik ----------
-    /** Kontrol izni zorunlu (masaustu `requireControlApproval`). */
-    var requireControlApproval: Boolean
-        get() = prefs.getBoolean(KEY_REQUIRE_APPROVAL, true)
-        set(v) = prefs.edit().putBoolean(KEY_REQUIRE_APPROVAL, v).apply()
-
     // ---------- oturum hafizasi ----------
     var lastRoom: String
         get() = prefs.getString(KEY_LAST_ROOM, "") ?: ""
@@ -97,7 +91,6 @@ class SettingsStore(context: Context) {
         private const val KEY_TURN_URL = "turn_url"
         private const val KEY_TURN_USER = "turn_user"
         private const val KEY_TURN_PASS = "turn_pass"
-        private const val KEY_REQUIRE_APPROVAL = "require_control_approval"
         private const val KEY_LAST_ROOM = "last_room"
         private const val KEY_LAST_PASSWORD = "last_password"
 

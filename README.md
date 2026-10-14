@@ -1,8 +1,8 @@
 # MAKAY Uzaktan Bağlantı
 
-Windows bilgisayarı telefondan uzaktan yönetmek için iki yönlü uzaktan bağlantı
-uygulaması. Bilgisayar ekranını telefonda görür, dokunarak kontrol eder,
-dosya gönderir ve yazışır.
+Windows bilgisayarını telefondan uzaktan yönetmek için tek yönlü uzaktan
+bağlantı uygulaması. Bilgisayar ekranını telefonda görür, dokunarak kontrol
+eder, dosya gönderir ve yazışır.
 
 - **Paket adı:** `com.makay.remote`
 - **Sürüm:** `VERSION.txt` (şu an `1.0.5`)
@@ -10,47 +10,46 @@ dosya gönderir ve yazışır.
 - **Eşlenik masaüstü tarafı:** `Makay AIO` → *Uzak Bağlantı* (`apps/remote`)
 
 İki uygulama **aynı iletişim protokolünü** kullanır: aynı oda adı, aynı şifre
-doğrulaması, aynı mesaj tipleri. Yani Android ↔ Windows her iki yönde de
-çalışır (aşağıda [Uyum](#windows-masaüstü-ile-uyum) tablosu).
+doğrulaması, aynı mesaj tipleri. Oda her iki cihazdan da açılabilir (aşağıda
+[Uyum](#windows-masaüstü-ile-uyum) tablosu).
 
 ---
 
 ## Özellikler
 
-| Özellik | Android → Windows | Windows → Android |
-|---|---|---|
-| Ekran paylaşımı | ✅ | ✅ |
-| Uzak kontrol (fare/klavye) | ✅ | ✅ *(`-kontrol` APK gerekir)* |
-| Dosya gönderimi | ✅ | ✅ |
-| Sohbet | ✅ | ✅ |
-| Pano (panodan kopyala/yapıştır) | ✅ | ✅ *(onay ister)* |
-| Mikrofon durumu | ✅ | ✅ |
-| Hoparlör yönlendirme | ✅ | — |
-| Bağlantı kurma (oda + şifre) | ✅ | ✅ |
+| Özellik | Durum |
+|---|---|
+| Bağlantı kurma (oda + şifre) | ✅ her iki cihazdan |
+| Bilgisayar ekranını telefonda görme | ✅ |
+| **Bilgisayarı telefondan dokunarak kontrol etme** | ✅ |
+| Dosya gönderimi | ✅ iki yönde |
+| Sohbet | ✅ |
+| Pano (panodan kopyala/yapıştır) | ✅ iki yönde, alıcı onayı ister |
+| Mikrofon durumu | ✅ |
+| Hoparlör yönlendirme | ✅ |
+| Telefonda ekran paylaşımı (yalnız izleme) | ✅ |
+| Telefonu bilgisayardan kontrol etme | ❌ **bilinçli olarak kaldırıldı** |
 
 ---
 
 ## İndireceğiniz APK
 
-Her GitHub Release'de **iki APK** vardır; ihtiyacınıza göre birini seçin:
+Her GitHub Release'de **tek bir APK** vardır:
 
 | APK | Ne işe yarar | Kurulum |
 |---|---|---|
-| `MakayRemote_vX.Y.Z.apk` | **Temel.** Ekran paylaşımı, dosya, sohbet, pano, mikrofon/hoparlör **ve Android → Windows uzak kontrol.** Günlük kullanım için budur. | ✅ Diğer Makay uygulamalarıyla aynı şekilde kurulur |
-| `MakayRemote_vX.Y.Z-kontrol.apk` | Temeldeki her şey **+ Windows → Android uzak kontrol** (bilgisayardan telefonu yönetme). | ⚠️ Erişilebilirlik servisi bildirdiği için yandan yüklemede engellenebilir |
+| `MakayRemote_vX.Y.Z.apk` | Uygulamanın tamamı: ekran paylaşımı, dosya, sohbet, pano, mikrofon/hoparlör **ve uzak kontrol.** | ✅ Diğer Makay uygulamalarıyla **aynı şekilde sorunsuz kurulur** |
 
-**Neden ikisi?** Android, bir uygulamanın kendi penceresi dışında girdi
+**Neden tek APK?** Android, bir uygulamanın kendi penceresi dışında girdi
 enjekte etmesine yalnızca erişilebilirlik servisiyle izin verir (`INJECT_EVENTS`
-sistem imzası gerektirir, uygulamalara verilmez). Google ise erişilebilirlik
-bildiren yandan yükleme yapılan uygulamaları **bilerek** engeller — aksi halde
-her uygulama telefonu sessizce yönetebilirdi. Bu yüzden:
+sistem imzası gerektirir ve uygulamalara hiç verilmez). Google ise
+erişilebilirlik **bildiren** yandan yükleme yapılan uygulamaları "uyarı +
+Yine de kur" düzeyinde değil, **kurulmasına kadar** engeller. Bu yüzden
+uygulama bilerek **hiçbir erişilebilirlik servisi bildirmez** — diğer Makay
+uygulamalarıyla birebir aynı kurulum deneyimi budur.
 
-- **Telefon ekranını bilgisayardan yönetmeyecekseniz** temel APK yeterlidir ve
-  sorunsuz kurulur.
-- **Bu özellik gerekiyorsa** `-kontrol` APK'sını kurun. Google engeli çıkarsa
-  telefonda **Ayarlar → Google → Play Protect → "Uygulamaları tara"**
-  geçici kapatılıp kurulum yapılıp tekrar açılabilir. Bu, AnyDesk gibi uzaktan
-  yönetim uygulamalarında da geçerlidir.
+Bu kararın bedeli tek şeydir: **telefonu bilgisayardan yönetme özelliği
+yoktur.** Uygulama tek yönde çalışır — *bilgisayar telefondan yönetilir.*
 
 İndirme: [GitHub Releases](https://github.com/makaydestek/Makay-Uzak-Baglanti/releases)
 
@@ -109,59 +108,44 @@ Bağlantı, eşleşme ağı (MQTT) üzerinden eşleşilir, ardından **doğrudan
 
 ---
 
-## Uzak kontrolü açma (Windows → Android)
+## Uzaktan kontrol (Android → Windows)
 
-> **Ön koşul:** Bu bölüm yalnızca **`-kontrol` APK'sına** aittir. Temel APK'da
-> bu özellik pakette yoktur — bkz. [İndireceğiniz APK](#indireceğiniz-apk).
-
-Windows'tan telefonu kontrol etmek için **bir kez** gerekir:
-
-1. **Ayarlar → Erişilebilirlik → Erişilebilirlik hizmetleri**
-2. **MAKAY Uzak Kontrol** → **Aç**
-
-> Android, uygulama dışında girdi enjekte etmeye yalnızca bu yolla izin verir
-> (sistem imzası gerektiren `INJECT_EVENTS` izni uygulamalara verilmez).
-> Servis **kapalıysa** telefon tarafında sarı bir uyarı bandı çıkar ve
-> **"Servisi Aç"** düğmesi ile doğrudan bu ekranına gidilir.
-> Servis açılmadan da bağlantı kurulur, izin isteği onaylanır — yalnızca
-> girdiler uygulanmaz.
+Odayı açan taraf ekranını paylaşır (genelde Windows); odaya **katılan** taraf
+ekranı görür ve **ekrana dokunarak bilgisayarı yönetir.** Bu uygulamanın ana
+destek senaryosudur ve **hiçbir özel izin gerektirmez.**
 
 **Kontrol akışı:**
 
-1. Windows tarafı → **Kontrol İste**
-2. Telefonda onay (Ayarlar → *"Kontrol izni zorunlu"* kapalıysa otomatik)
-3. Windows tarafında **Kontrol aktif** rozeti belirir
-4. Telefonda fare hareketleri Android dokunmasına dönüşür
+1. Telefonda **Kontrol İste** düğmesine dokunun
+2. Kontrol **anında** etkinleşir — bilgisayar tarafı onay adımı beklemez
+   (odayı açan taraf zaten izin vermiş sayılır)
+3. Ekrana dokunun / sürükleyin
+4. Bırakmak için **Kontrolü Bırak**
 
 **Ne yapılır:**
 
-| Windows girdisi | Telefonda |
+| Telefon hareketi | Bilgisayarda |
 |---|---|
-| Sol tık | Dokunma |
-| Basılı tut (> 0,6 sn) veya sağ tık | Uzun basma (bağlam menüsü) |
-| Sürükleme | Kaydırma |
-| Tekerlek | Dikey kaydırma |
-| `Esc` | Geri |
-| `Home` / `Win` | Ana ekran |
-| Harf, rakam, boşluk, `Enter` | Odaklı metin alanına yazma |
-| `Backspace` / `Delete` | Karakter silme |
+| Dokunma | Sol tık |
+| Sürükleme | Basılı sol tıkla sürükleme (pencere taşıma, alan seçimi) |
 
-**Sınırlar:** Android imleç (hover) olmadığından basılı olmayan fare
-hareketleri bir şeye dönüşmez. Yön tuşları, `Shift`/`Ctrl`/`Alt` ve `F`
-tuşları Android'de karşılığı olmadığından yok sayılır.
+**Sınırlar:** Yalnızca fare; klavye girdisi yoktur, kaydırma (tekerlek) ve
+sağ tık henüz yoktur.
 
-Kontrolü bırakmak: Windows'ta **Kontrolü Kaldır**, telefonda ise
-**Kontrol sonlandırıldı** bildirimi.
+> Telefon → bilgisayar yönünde ekran paylaşımını da tersine çevirebilirsiniz:
+> telefon **Oda Aç** ile kendi ekranını paylaşır, bilgisayar yalnızca
+> **izler.** (Telefonu bilgisayardan yönetme özelliği bilinçli olarak
+> kaldırılmıştır — bkz. [İndireceğiniz APK](#indireceğiniz-apk).)
 
 ---
 
 ## Pano (panodan metin)
 
-**Windows → Android:** Windows'ta **Pano Gönder** → telefonda önizlemeli
+**Bilgisayardan telefona:** Windows'ta **Pano Gönder** → telefonda önizlemeli
 onay penceresi çıkar; **Panoya Yaz** ile Android panosuna geçer,
-**Reddet** ile atlanır. (Windows tarafı da aynı şekilde onay ister.)
+**Reddet** ile atlanır.
 
-**Android → Windows:** Telefonda **Pano** düğmesi → kendi panonuzdaki metin
+**Telefondan bilgisayara:** Telefonda **Pano** düğmesi → kendi panonuzdaki metin
 karşı tarafa gönderilir; Windows'ta aynı onay penceresi görünür.
 
 ---
@@ -233,22 +217,17 @@ doğrular.
 ## Derleme ve test
 
 ```bat
-:: birim testleri (121 test x debug/release/kontrol varyantlari)
+:: birim testleri (102 test x debug/release varyantlari)
 gradlew.bat :app:testDebugUnitTest
 gradlew.bat :app:testReleaseUnitTest
 
-:: TEMEL APK (imza local.properties'teki RELEASE_* anahtarlarindan gelir)
+:: APK (imza local.properties'teki RELEASE_* anahtarlarindan gelir)
 gradlew.bat :app:assembleRelease
-
-:: KONTROL APK (Windows -> Android uzak kontrol + AccessibilityService)
-gradlew.bat :app:assembleKontrol
 ```
 
-`assembleRelease` tek basina calistirildiginda `publishReleaseApk` gorevi **her iki
-APK'yi de** uretip `APK\` klasörüne yazar. Kontrol varyanti `app/build.gradle.kts`
-icindeki `kontrol` derleme tipidir; release yapisini miras alir ve tek fark
-`src/kontrol/` kaynak kümesinin manifest'e birlestirilmesidir
-(`AndroidManifest.xml` + erisilebilirlik servisi + kaynaklari).
+`assembleRelease` tek basina calistirildiginda `publishReleaseApk` gorevi APK'yi
+uretip `APK\` klasorune yazar (ayrica `.apk.sha256` + R8 `mapping.txt`).
+Uygulama **tek derleme tipidir** (`release`); hicbir ozel izin bildirmez.
 
 Raporlar: `app\build\reports\tests\` ve `app\build\test-results\`.
 CI her push'ta `.github/workflows/ci.yml` ile kosar.
@@ -267,9 +246,9 @@ Tek komut — **`APK-Hazirla.bat`**:
 |---|---|
 | 1 | Açık (commit'lenmemiş) değişiklikler commit edilir |
 | 2 | `VERSION.txt` otomatik artar (`1.0.9` → `1.0.10`) |
-| 3 | `gradlew assembleRelease` → **iki APK**: `APK\…v1.0.10.apk` (temel) + `…v1.0.10-kontrol.apk`; her ikisi için `.apk.sha256` + `mapping.txt` |
+| 3 | `gradlew assembleRelease` → `APK\…v1.0.11.apk`; `.apk.sha256` + `mapping.txt` ile birlikte |
 | 4 | Sürüm commit'i oluşturulur ve `origin main`'e itilir |
-| 5 | GitHub Release açılır, **6 asset** yüklenir (2 APK + 2 SHA + 2 mapping) |
+| 5 | GitHub Release açılır, **3 asset** yüklenir (APK + SHA + mapping) |
 | 6 | Eski release'ler + etiketleri silinir, yalnızca yenis kalır |
 
 Yalnızca `VERSION.txt` commit'lenip push edilir; APK ve derleme çıktıları

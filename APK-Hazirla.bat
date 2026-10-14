@@ -9,20 +9,23 @@ REM   1) Acik (commitlenmemis) degisiklikleri commit et
 REM   2) VERSION.txt surumunu artir
 REM   3) Release APK derle  -> APK\MakayRemote_vX.Y.Z.apk + .sha256
 REM      (+ APK\MakayRemote_vX.Y.Z-mapping.txt  R8 obfuscation haritasi)
-REM      AYRICA kontrol varyanti:
-REM      APK\MakayRemote_vX.Y.Z-kontrol.apk + .sha256 + -kontrol-mapping.txt
 REM   4) Surum degisikligini commit et + depoya it (push)
-REM   5) GitHub Release olustur + iki APK/SHA/mapping yukle (6 asset)
+REM   5) GitHub Release olustur + APK/SHA/mapping yukle (3 asset)
 REM   6) Eski release'leri sil (yalnizca yeni surum kalir)
 REM
-REM  IKI APK NE ISE YARAR:
-REM   MakayRemote_vX.Y.Z.apk         TEMEL  - Play Protect engellemez, ayni Makay
-REM                                     uygulamalari gibi kurulur. Android -> Windows
-REM                                     uzak kontrol dahil tum ozellikler calisir.
-REM   MakayRemote_vX.Y.Z-kontrol.apk KONTROL - Windows -> Android uzak kontrol de
-REM                                     acar. Bu, Android'in yalnca erisilebilirlik
-REM                                     servisiyle izin verdigi bir islem oldugu icin
-REM                                     yandan yüklemede Play Protect uyarir/engeller.
+REM  TEK APK NE ISE YARAR:
+REM   MakayRemote_vX.Y.Z.apk - Play Protect engellemez, ayni Makay
+REM     uygulamalari gibi kurulur. Ekran paylasimi, dosya, sohbet, pano,
+REM     mikrofon/hoparlor VE Android -> Windows uzak kontrol dahil tum
+REM     ozellikler calisir.
+REM
+REM   Windows -> Android kontrol YOKTUR ve bilincli olarak kaldirildi:
+REM     bu yon yalnizca AccessibilityService ile mumkun (INJECT_EVENTS
+REM     sistem imzasi gerektirir) ve Google Play Protect, yandan yukleme
+REM     yapilan bu servisi bildiren uygulamalari KURULMASINA KADAR
+REM     engelliyor - "uyari + Yine de kur" degil. Eko sistemin diger Makay
+REM     uygulamalarinda accessibility servisi olmadigi icin onlar sorunsuz
+REM     kurulur; bu uygulama engelleniyordu. Bu yon kaldirildi.
 REM
 REM  APK yalnizca %~dp0APK klasorunde birakilir; gradle
 REM  publishReleaseApk gorevi diger tum kopyalari siler.
@@ -191,16 +194,9 @@ echo [4/6] Teslimat dogrulaniyor...
 REM ============================================================
 set "APK_TARGET=%APK_DIR%\MakayRemote_v!VERSION!.apk"
 set "SHA_TARGET=%APK_DIR%\MakayRemote_v!VERSION!.apk.sha256"
-set "APK_K=%APK_DIR%\MakayRemote_v!VERSION!-kontrol.apk"
-set "SHA_K=%APK_DIR%\MakayRemote_v!VERSION!-kontrol.apk.sha256"
 if not exist "!APK_TARGET!" (
-    echo [HATA] Beklenen TEMEL APK yok:
+    echo [HATA] Beklenen APK yok:
     echo  !APK_TARGET!
-    goto :END_FAIL
-)
-if not exist "!APK_K!" (
-    echo [HATA] Beklenen KONTROL APK yok ^(Windows -^> Android uzak kontrol^):
-    echo  !APK_K!
     goto :END_FAIL
 )
 if not exist "!SHA_TARGET!" (
@@ -211,17 +207,6 @@ if not exist "!SHA_TARGET!" (
         "Write-Output $h" >nul 2>&1
     if not exist "!SHA_TARGET!" (
         echo [HATA] SHA-256 olusturulamadi.
-        goto :END_FAIL
-    )
-)
-if not exist "!SHA_K!" (
-    echo [UYARI] Kontrol SHA dosyasi yok, olusturuluyor...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-        "$h=(Get-FileHash -Algorithm SHA256 '!APK_K!').Hash.ToLower();" ^
-        "[IO.File]::WriteAllText('!SHA_K!', ($h + '  MakayRemote_v!VERSION!-kontrol.apk' + [Environment]::NewLine));" ^
-        "Write-Output $h" >nul 2>&1
-    if not exist "!SHA_K!" (
-        echo [HATA] Kontrol SHA-256 olusturulamadi.
         goto :END_FAIL
     )
 )
@@ -238,21 +223,12 @@ for %%A in ("!APK_TARGET!") do (
     set "APK_DATE=%%~tA"
 )
 set /a SIZE_KB=!SIZE_BYTES! / 1024
-for %%A in ("!APK_K!") do set "SIZE_K_BYTES=%%~zA"
-set /a SIZE_K_KB=!SIZE_K_BYTES! / 1024
-echo  [OK] MakayRemote_v!VERSION!.apk  ^(!SIZE_KB! KB^)  TEMEL - Play Protect engellemez
+echo  [OK] MakayRemote_v!VERSION!.apk  ^(!SIZE_KB! KB^)
 echo  [OK] MakayRemote_v!VERSION!.apk.sha256
-echo  [OK] MakayRemote_v!VERSION!-kontrol.apk  ^(!SIZE_K_KB! KB^)  KONTROL - Windows -^> Android
-echo  [OK] MakayRemote_v!VERSION!-kontrol.apk.sha256
 if exist "%APK_DIR%\MakayRemote_v!VERSION!-mapping.txt" (
     echo  [OK] MakayRemote_v!VERSION!-mapping.txt  ^(R8 haritasi - release asset^)
 ) else (
     echo  [UYARI] mapping.txt yok - R8 haritasi olusturulmamis olabilir.
-)
-if exist "%APK_DIR%\MakayRemote_v!VERSION!-kontrol-mapping.txt" (
-    echo  [OK] MakayRemote_v!VERSION!-kontrol-mapping.txt  ^(R8 haritasi - release asset^)
-) else (
-    echo  [UYARI] kontrol-mapping.txt yok - R8 haritasi olusturulmamis olabilir.
 )
 echo.
 
@@ -315,22 +291,13 @@ if errorlevel 1 (
 )
 
 set "TAG=!VERSION!"
-set "APK=!APK_TARGET!"
-set "SHA=!SHA_TARGET!"
 set "MAP=%APK_DIR%\MakayRemote_v!VERSION!-mapping.txt"
-set "APK_K=%APK_DIR%\MakayRemote_v!VERSION!-kontrol.apk"
-set "SHA_K=%APK_DIR%\MakayRemote_v!VERSION!-kontrol.apk.sha256"
-set "MAP_K=%APK_DIR%\MakayRemote_v!VERSION!-kontrol-mapping.txt"
 
-REM Var olan tum assetleri topla: TEMEL varyant (kurulabilir) +
-REM KONTROL varyanti (Windows -> Android uzak kontrol) + iki R8 haritasi.
+REM Var olan tum assetleri topla: APK + SHA-256 + R8 haritasi.
 set "ASSETS="
 if exist "!APK_TARGET!" set ASSETS=!ASSETS! "!APK_TARGET!"
 if exist "!SHA_TARGET!" set ASSETS=!ASSETS! "!SHA_TARGET!"
 if exist "!MAP!"        set ASSETS=!ASSETS! "!MAP!"
-if exist "!APK_K!"      set ASSETS=!ASSETS! "!APK_K!"
-if exist "!SHA_K!"      set ASSETS=!ASSETS! "!SHA_K!"
-if exist "!MAP_K!"      set ASSETS=!ASSETS! "!MAP_K!"
 
 gh release view "!TAG!" --repo %REPO% >nul 2>&1
 if errorlevel 1 (
@@ -394,8 +361,7 @@ if "!NOPAUSE!"=="0" start "" explorer "%APK_DIR%"
 
 echo ================================================
 echo  Tamamlandi - MakayRemote v!VERSION!
-echo  Kurulum : APK\MakayRemote_v!VERSION!.apk  ^(temel - sorunsuz kurulur^)
-echo  Kontrol : APK\MakayRemote_v!VERSION!-kontrol.apk  ^(Windows -^> Android^)
+echo  Kurulum : APK\MakayRemote_v!VERSION!.apk  ^(sorunsuz kurulur^)
 echo  Release : https://github.com/%REPO%/releases/tag/!VERSION!
 echo ================================================
 if "!NOPAUSE!"=="0" (
