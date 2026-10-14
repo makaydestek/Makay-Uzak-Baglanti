@@ -1,5 +1,7 @@
 package com.makay.remote.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,9 +27,15 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Mouse
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -87,8 +95,25 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
     val remoteVideo by vm.remoteVideo.collectAsState()
     val context = LocalContext.current
 
+    // --- pano / ses / uzak kontrol durumlari ---
+    val peerControlActive by vm.peerControlActive.collectAsState()
+    val remoteControlOn by vm.remoteControlAvailable.collectAsState()
+    val inboundClip by vm.inboundClipboard.collectAsState()
+    val micOn by vm.micState.collectAsState()
+    val speakerOn by vm.speakerOn.collectAsState()
+
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+
+    // --- mikrofon izni (yalnizca acilista istenir) ---
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) vm.toggleMic()
+        else android.widget.Toast.makeText(
+            context, "Mikrofon izni verilmedi", android.widget.Toast.LENGTH_SHORT
+        ).show()
+    }
 
     LaunchedEffect(chat.size) {
         if (chat.isNotEmpty()) listState.animateScrollToItem(chat.size - 1)
@@ -231,6 +256,94 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
 
         Spacer(Modifier.height(8.dp))
 
+        // ---------- ses + pano (telefon gorusmesi yapisi) ----------
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = {
+                    if (micOn) {
+                        vm.toggleMic()
+                    } else if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED
+                    ) {
+                        micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                    } else {
+                        vm.toggleMic()
+                    }
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    if (micOn) Icons.Filled.Mic else Icons.Filled.MicOff,
+                    contentDescription = if (micOn) "Mikrofon açık" else "Mikrofon kapalı",
+                    modifier = Modifier.size(16.dp),
+                    tint = if (micOn) c.accent else c.muted
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("Mikrofon")
+            }
+
+            OutlinedButton(
+                onClick = { vm.setSpeaker(!speakerOn) },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    if (speakerOn) Icons.AutoMirrored.Filled.VolumeUp
+                    else Icons.AutoMirrored.Filled.VolumeOff,
+                    contentDescription = if (speakerOn) "Hoparlör açık" else "Hoparlör kapalı",
+                    modifier = Modifier.size(16.dp),
+                    tint = if (speakerOn) c.accent else c.muted
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("Hoparlör")
+            }
+
+            OutlinedButton(
+                onClick = {
+                    val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                        as ClipboardManager
+                    val clip = cm.primaryClip
+                    val text = if (clip != null && clip.itemCount > 0) {
+                        clip.getItemAt(0).coerceToText(context).toString()
+                    } else ""
+                    vm.sendClipboard(text)
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Filled.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Pano")
+            }
+        }
+
+        // ---- Erisilebilirlik uyariisi: karsi taraf bizi kontrol edecek ama servis kapali ----
+        if (!remoteControlOn && (peerControlActive || pendingRequest != null)) {
+            Spacer(Modifier.height(8.dp))
+            Surface(
+                color = c.warn.copy(alpha = 0.18f),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Filled.Warning, null, Modifier.size(18.dp), tint = c.warn)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Bilgisayar sizi kontrol etmek istiyor, ancak uzak kontrol servisi kapalı.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.text,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { vm.openAccessibilitySettings(context) }) {
+                        Text("Servisi Aç", color = c.accent)
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
         // ---------- sohbet ----------
         LazyColumn(
             state = listState,
@@ -295,6 +408,54 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
             },
             dismissButton = {
                 TextButton(onClick = { vm.denyControl() }) { Text("Reddet", color = c.danger) }
+            }
+        )
+    }
+
+    // ---------- gelen pano onayi (masaustu clipModal karsiligi) ----------
+    if (inboundClip != null) {
+        val shown = inboundClip!!.let { if (it.length > 240) it.slice(0 until 240) + "…" else it }
+        AlertDialog(
+            onDismissRequest = { vm.clearInboundClipboard() },
+            containerColor = c.bg2,
+            title = { Text("Pano içeriği", color = c.text) },
+            text = {
+                Column {
+                    Text(
+                        "Karşı taraf panonuza metin yazmak istiyor:",
+                        color = c.muted,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        color = c.card,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            shown,
+                            color = c.text,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(8.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                            as ClipboardManager
+                        cm.setPrimaryClip(ClipData.newPlainText("MAKAY", inboundClip))
+                        vm.clearInboundClipboard()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = c.success)
+                ) { Text("Panoya Yaz") }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.clearInboundClipboard() }) {
+                    Text("Reddet", color = c.danger)
+                }
             }
         )
     }

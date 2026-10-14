@@ -1,6 +1,11 @@
 package com.makay.remote.rtc
 
+import com.google.gson.TypeAdapter
+import com.google.gson.annotations.JsonAdapter
 import com.google.gson.annotations.SerializedName
+import com.google.gson.stream.JsonReader
+import com.google.gson.stream.JsonToken
+import com.google.gson.stream.JsonWriter
 
 /**
  * Veri kanali zarfı — masaustu `engine.js:envelope/parseEnvelope` ile ayni.
@@ -77,6 +82,7 @@ data class ControlPayload(
     @SerializedName("x") val x: Double? = null,
     @SerializedName("y") val y: Double? = null,
     @SerializedName("b") val b: String? = null,
+    @JsonAdapter(DeltaJsonAdapter::class)
     @SerializedName("d") val d: Int? = null,
     @SerializedName("k") val k: String? = null
 ) {
@@ -87,5 +93,34 @@ data class ControlPayload(
         const val WHEEL = "wheel"
         const val KEY_DOWN = "keydown"
         const val KEY_UP = "keyup"
+    }
+}
+
+/**
+ * `d` ALANI ICIN IKI BICIMLI OKUYUCU.
+ *
+ * TEL UYUMU KRITIK: masaustu `app.js:onCtrlWheel` `d`'yi SAYI, ama
+ * `onCtrlKeyDown/Up` `d`'yi BOOLEAN (`d: true/false`) gonderir. Alan `Int?`
+ * okunursa Gson `boolean`->`int` donusumunde hata verir ve
+ * `PeerBridge.onMessage` icindeki `runCatching{}.getOrNull()` bunu NULL'a
+ * cevirir — yani tus olayi SESSIZCE KAYBOLUR (test
+ * `windowsKeyEnvelope_booleanDDoesNotDropEvent` bunu belgeler).
+ *
+ * Bu adapter gelen her iki bicimi de `Int?`'ye indirger:
+ *  - NUMBER -> delta (wheel)
+ *  - BOOLEAN -> 1/0 (Windows tus olayi; yon zaten `type`'ta oldugu icin
+ *    yalnizca tolerans amaclidir)
+ */
+class DeltaJsonAdapter : TypeAdapter<Int?>() {
+    override fun write(out: JsonWriter, value: Int?) {
+        if (value == null) out.nullValue() else out.value(value)
+    }
+
+    override fun read(inp: JsonReader): Int? = when (inp.peek()) {
+        JsonToken.NULL -> { inp.nextNull(); null }
+        JsonToken.BOOLEAN -> if (inp.nextBoolean()) 1 else 0
+        JsonToken.NUMBER -> inp.nextInt()
+        JsonToken.STRING -> inp.nextString().toIntOrNull()
+        else -> { inp.skipValue(); null }
     }
 }

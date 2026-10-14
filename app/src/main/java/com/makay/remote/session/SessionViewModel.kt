@@ -34,6 +34,21 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     val pendingControlRequest = controller.pendingControlRequest
     val remoteVideo = controller.remoteVideo
 
+    // ---------------- pano / ses / uzak kontrol ----------------
+
+    /** Windows -> Android uzak kontrol servisi (Erisilebilirlik) acik mi? */
+    val remoteControlAvailable = com.makay.remote.control.RemoteControlService.available
+
+    /** Karsi tarafin bizi kontrol edebilmesi (izin verildi mi). */
+    val peerControlActive = controller.peerControlActive
+
+    /** Gelen pano metni (onay dialoju icin). */
+    val inboundClipboard = controller.inboundClipboard
+
+    val micState = controller.micState
+    val peerMicState = controller.peerMicState
+    val speakerOn = controller.speakerOn
+
     private val _toasts = MutableSharedFlow<SessionController.Event.Toast>(extraBufferCapacity = 8)
     val toasts: SharedFlow<SessionController.Event.Toast> = _toasts.asSharedFlow()
 
@@ -67,6 +82,34 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Teknisyen → host kontrol olaylari. */
     fun sendControl(payload: ControlPayload) = controller.sendControl(payload)
+
+    // ---------------- pano ----------------
+
+    /** Kendi panomuzdaki metni karsi tarafa gonderir. */
+    fun sendClipboard(text: String) = controller.sendClipboard(text)
+
+    /** Gelen pano icin kullanici karar verdi (onayla/reddet). */
+    fun clearInboundClipboard() = controller.clearInboundClipboard()
+
+    // ---------------- ses (telefon gorusmesi yapisi) ----------------
+
+    /**
+     * Mikrofonu ac/kapat. `RECORD_AUDIO` izni UI'da alinmamissa izin
+     * istenir ve karar asagidaki geri cagriya bildirilir.
+     */
+    fun toggleMic() = controller.toggleMic()
+
+    fun setSpeaker(on: Boolean) = controller.setSpeaker(on)
+
+    /** Ayarlar -> Erisilebilirlik ekranini acar (uzak kontrol servisi icin). */
+    fun openAccessibilitySettings(context: android.content.Context) {
+        runCatching {
+            context.startActivity(
+                android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
 
     fun sendFile(file: File, mime: String) = viewModelScope.launch { controller.sendFile(file, mime) }
 

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Erisilebilirlik servisi tanimi.
+
+  `canPerformGestures` ZORUNLUDUR: `dispatchGesture` (dokunma/surukleme)
+  yalnizca bu ozellik acikken calisir.
+  `canRetrieveWindowContent` ZORUNLUDUR: odakli metin alanini bulup
+  `ACTION_SET_TEXT` ile yazabilmek icin pencere icerigi okunmalidir.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="100" />

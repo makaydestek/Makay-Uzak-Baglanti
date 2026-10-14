@@ -190,6 +190,41 @@ class WireEnvelopeTest {
         assertTrue(env.ev == null)
     }
 
+    /**
+     * KRITIK TEL UYUMU — Windows `app.js:onCtrlKeyDown/Up` tus olaylarini
+     * `d: true/false` (BOOLEAN) gonderir, `d: Int?` ise Gson bunu sayiya
+     * ceviremez ve `PeerBridge.onMessage` icindeki `runCatching` null dondurur:
+     * OLAY SESSIZCE KAYBOLUR. Bu test gercegin belgeleri ve regresyon korumasidir.
+     */
+    @Test
+    fun windowsKeyEnvelope_booleanDDoesNotDropEvent() {
+        val down = """{"t":"ctrl","ev":{"type":"keydown","k":"a","d":true}}"""
+        val up = """{"t":"ctrl","ev":{"type":"keyup","k":"a","d":false}}"""
+        val e1 = runCatching { gson.fromJson(down, WireEnvelope::class.java) }.getOrNull()
+        val e2 = runCatching { gson.fromJson(up, WireEnvelope::class.java) }.getOrNull()
+        assertNotNull("Windows keydown zarfi okunabilmeli", e1)
+        assertNotNull("Windows keyup zarfi okunabilmeli", e2)
+        assertEquals("keydown", e1!!.ev!!.type)
+        assertEquals("a", e1.ev!!.k)
+        assertEquals("keyup", e2!!.ev!!.type)
+    }
+
+    /**
+     * Windows `d` alanini wheel'de SAYI, tusta BOOLEAN gonderir; Android'in
+     * `d` okumasI her iki bicimde de calismalidir (DeltaJsonAdapter).
+     */
+    @Test
+    fun controlPayload_dAcceptsBooleanAndNumber() {
+        val wheel = """{"t":"ctrl","ev":{"type":"wheel","d":40}}"""
+        val key = """{"t":"ctrl","ev":{"type":"keydown","k":"enter","d":true}}"""
+        val w = runCatching { gson.fromJson(wheel, WireEnvelope::class.java) }.getOrNull()
+        val k = runCatching { gson.fromJson(key, WireEnvelope::class.java) }.getOrNull()
+        assertNotNull(w)
+        assertNotNull(k)
+        assertEquals(40, w!!.ev!!.d)
+        assertEquals(1, k!!.ev!!.d)
+    }
+
     @Test
     fun iceEnvelope_carriesAllRenegotiationFields() {
         val json = gson.toJson(

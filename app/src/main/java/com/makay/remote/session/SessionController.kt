@@ -2,10 +2,12 @@ package com.makay.remote.session
 
 import android.content.ContentValues
 import android.content.Context
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
+import com.makay.remote.control.RemoteControlService
 import com.makay.remote.core.IceConfig
 import com.makay.remote.core.InviteParser
 import com.makay.remote.core.Primitives
@@ -126,6 +128,30 @@ class SessionController(
 
     private val _remoteAudio = MutableStateFlow<AudioTrack?>(null)
     val remoteAudio: StateFlow<AudioTrack?> = _remoteAudio.asStateFlow()
+
+    /**
+     * Windows -> Android YONUNDE karsi tarafin bizi kontrol edip edemedigi.
+     * `_controlState` bu isin ters yonunu (bizim kontrol istemimiz) tutar;
+     * ikisini ayirmak, gelen olaylarin izinsiz uygulanmasini engeller.
+     */
+    private val _peerControlActive = MutableStateFlow(false)
+    val peerControlActive: StateFlow<Boolean> = _peerControlActive.asStateFlow()
+
+    /** Karsi taraftan gelen pano metni; UI onay verince yazilir/silinir. */
+    private val _inboundClipboard = MutableStateFlow<String?>(null)
+    val inboundClipboard: StateFlow<String?> = _inboundClipboard.asStateFlow()
+
+    /** Bu cihazin mikrofon durumu (kendi track'imiz). */
+    private val _micState = MutableStateFlow(false)
+    val micState: StateFlow<Boolean> = _micState.asStateFlow()
+
+    /** Karsi tarafin (masaustunun) mikrofon durumu — yalnizca bilgi amacli. */
+    private val _peerMicState = MutableStateFlow<Boolean?>(null)
+    val peerMicState: StateFlow<Boolean?> = _peerMicState.asStateFlow()
+
+    /** Hoparlör yonlendirmesi. Varsayilan acik; hic dokunulmazsa davranis DEGISMES. */
+    private val _speakerOn = MutableStateFlow(true)
+    val speakerOn: StateFlow<Boolean> = _speakerOn.asStateFlow()
 
     // ---------------- ic durum ----------------
 
@@ -441,6 +467,8 @@ class SessionController(
             if (!settings.requireControlApproval) {
                 peer?.grantControl()
                 _controlState.value = ControlState.GRANTED
+                _peerControlActive.value = true
+                warnIfControlServiceOff()
                 emitToast("Kontrol izni otomatik verildi ($name)", "info")
                 return
             }
@@ -459,14 +487,48 @@ class SessionController(
         }
 
         override fun onControlStopped() {
+            _peerControlActive.value = false
             if (_controlState.value == ControlState.GRANTED) {
                 _controlState.value = ControlState.NONE
                 emitToast("Kontrol sonlandırıldı", "info")
             }
         }
 
+        /**
+         * Karsi taraftan gelen fare/klavye olayi — Windows -> Android yonu.
+         *
+         * Bu override ONCESINDE yoktu: arayuzun bos govdesi (`fun onControl(ev) {}`)
+         * nedeniyle olaylar sessizce yutuluyordu, yani kullanici "Kontrol izni
+         * verildi" bildirimini gormesine ragmen hicbir sey olmuyordu.
+         */
+        override fun onControl(ev: ControlPayload) {
+            // Yalnizca izin verilmisken uygula (izin geri alinmissa olay duser)
+            if (!_peerControlActive.value) return
+            /* GELEN YONDE DE tel siniri calisir — cunku artik bu yol TELEFONU
+               uzaktan kontrol eder. Masaustu ile AYNI sinirlar uygulanir:
+               koordinat 0..1, tekerlek ±40, tus adi 1-32 karakter ve JSON
+               ayraci icermemeli. Boylece asiri koordinat / tanimsiz tus ile
+               oynamak mumkun degildir. (Bu sinir daha once yalnizca CIKISTA
+               `sendControl` uzerinden calisiyordu.) */
+            val clean = sanitize(ev)
+            if (clean == null) {
+                Log.w(TAG, "Gelen ctrl olayi RemoteGuard tarafindan dusuruldu: ${ev.type}")
+                return
+            }
+            if (!RemoteControlService.apply(clean)) warnIfControlServiceOff()
+        }
+
         override fun onClipboard(text: String) {
-            // Panoya yapistirma UI katmaninda yapilir (etkinlik akisi gerekir)
+            // Masaustu `onClipboard` ile AYNI davranis: dogrudan yazilmaz,
+            // onay dialoju gosterilir (clipModal karsiligi).
+            if (text.isEmpty()) return
+            _inboundClipboard.value = text
+            emitToast("Karşı taraf panoya metin gönderdi — onay bekleniyor", "info")
+        }
+
+        /** Masaustu `mic` durum YAYINIDIR; kendi mikrofonumuza dokunmayiz. */
+        override fun onMicToggle(enabled: Boolean) {
+            _peerMicState.value = enabled
         }
 
         override fun onRemoteVideo(track: VideoTrack?) {
@@ -536,15 +598,103 @@ class SessionController(
     fun grantControl() {
         _pendingControlRequest.value = null
         peer?.grantControl()
+        _peerControlActive.value = true
+        warnIfControlServiceOff()
     }
 
     fun denyControl() {
         _pendingControlRequest.value = null
         peer?.denyControl()
+        _peerControlActive.value = false
     }
 
     fun stopControl() {
         if (peer?.stopControl() == true) _controlState.value = ControlState.NONE
+    }
+
+    // ---------------- pano (iki yon) ----------------
+
+    /**
+     * Kendi panomuzdaki metni karsi tarafa gonderir.
+     * Masaustu `App.sendClipboard` ile ayni akis.
+     */
+    fun sendClipboard(text: String): Boolean {
+        val p = peer ?: return false
+        if (_state.value !is State.Connected) {
+            emitToast("Bağlantı yok — pano gönderilemedi", "error")
+            return false
+        }
+        if (text.isEmpty()) {
+            emitToast("Pano boş — önce metin kopyalayın", "warning")
+            return false
+        }
+        if (!p.sendClipboard(text)) {
+            emitToast("Pano gönderilemedi — bağlantı yok", "error")
+            return false
+        }
+        emitToast("Pano gönderildi — karşı taraf onaylayacak", "success")
+        return true
+    }
+
+    /** Gelen pano icin kullanici karari verdi (yazilsin/yazilmasin). */
+    fun clearInboundClipboard() {
+        _inboundClipboard.value = null
+    }
+
+    // ---------------- ses (telefon gorusmesi yapisi) ----------------
+
+    /**
+     * Mikrofonu acar/kapatir.
+     *
+     * `RECORD_AUDIO` izni UI katmaninda ALINMIS OLMALIDIR; track ilk acilista
+     * olusturulur ve masaustu `addScreenShareTrack` ile AYNI kalip olan
+     * `addTrack + negotiate()` yoluyla pazara girer (kanitlanmis yol).
+     * Varsayilan KAPALIDIR — mikrofon izinsiz acilmaz.
+     */
+    fun toggleMic(): Boolean {
+        val p = peer ?: return false
+        if (_state.value !is State.Connected) {
+            emitToast("Bağlantı yok", "error")
+            return false
+        }
+        val target = !_micState.value
+        if (target) {
+            val ok = runCatching {
+                if (!p.hasLocalMic()) p.ensureMicrophone()
+                p.sendMicState(true)
+            }.getOrElse {
+                Log.w(TAG, "Mikrofon acilamadi: ${it.message}")
+                emitToast("Mikrofon açılamadı", "error")
+                return false
+            }
+            if (!ok) {
+                emitToast("Mikrofon açılamadı — izin verilmiş mi?", "error")
+                return false
+            }
+        } else {
+            p.sendMicState(false)
+        }
+        _micState.value = target
+        emitToast(if (target) "Mikrofon açıldı" else "Mikrofon kapatıldı", "info")
+        return true
+    }
+
+    /**
+     * Hoparlör yonlendirmesini degistirir (telefon gorusmesindeki Hoparlör).
+     *
+     * DAVRANIS BILGISI: yonlendirme yalnizca kullanici dugmeye bastiginda
+     * degistirilir; uygulama hic dokunmazsa ses yonlendirmesi DEGISENDEGILDIR.
+     */
+    fun setSpeaker(on: Boolean) {
+        runCatching {
+            val am = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            @Suppress("DEPRECATION")
+            am.isSpeakerphoneOn = on
+        }.onFailure {
+            Log.w(TAG, "Hoparlör yönü değiştirilemedi: ${it.message}")
+        }
+        _speakerOn.value = on
+        emitToast(if (on) "Hoparlör açık" else "Hoparlör kapalı", "info")
     }
 
     /**
@@ -627,7 +777,12 @@ class SessionController(
         lastJoinRequestAt = 0L
         _chat.value = emptyList()
         _controlState.value = ControlState.NONE
+        _peerControlActive.value = false
         _pendingControlRequest.value = null
+        _inboundClipboard.value = null
+        _peerMicState.value = null
+        _micState.value = false
+        controlServiceWarned.set(false)
         _remoteVideo.value = null
         _remoteAudio.value = null
         if (_state.value !is State.Failed) _state.value = State.Idle
@@ -652,6 +807,22 @@ class SessionController(
 
     private fun emitToast(message: String, kind: String) {
         _events.tryEmit(Event.Toast(message, kind))
+    }
+
+    private val controlServiceWarned = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Kullanicinin Erisilebilirlik servisini ACMADIGINI bir kez soyleyir.
+     * Servis kapaliyken gelen kontrol olaylari uygulanamaz (sessizce yutulmaz,
+     * bilincli olarak birakilir) — ama kullanci bunu bilmelidir.
+     */
+    private fun warnIfControlServiceOff() {
+        if (RemoteControlService.isAvailable()) return
+        if (!controlServiceWarned.compareAndSet(false, true)) return
+        emitToast(
+            "Uzaktan kontrol kapalı — Ayarlar → Erişilebilirlik → «MAKAY Uzak Kontrol»ü açın",
+            "warning"
+        )
     }
 
     private fun saveToDownloads(name: String, mime: String, bytes: ByteArray): Uri? =

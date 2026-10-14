@@ -553,6 +553,25 @@ class PeerBridge(
         negotiate()
     }
 
+    /** Mikrofon track'i zaten kurulu mu? (ilk acilista olusturulur) */
+    fun hasLocalMic(): Boolean = localAudioTrack != null
+
+    /**
+     * Mikrofon track'ini (varsa) olusturur ve pazara girer.
+     *
+     * Yol `addScreenShareTrack` ile BIREBIR aynidir (`addTrack` ->
+     * `negotiate()`); bu yol uygulamada zaten ekran paylasiminda calisiyor.
+     * Track hic silinmez — yalnizca `setEnabled` ile susturulur, boylece
+     * yeniden pazarlik her acilista tekrarlanmaz.
+     *
+     * `RECORD_AUDIO` izni cagiran tarafta alinmis olmalidir.
+     */
+    fun ensureMicrophone() {
+        if (localAudioTrack != null) return
+        if (pc == null) return
+        addMicrophoneTrack(createAudioSource())
+    }
+
     fun removeVideoTrack() {
         val p = pc ?: return
         p.senders.filter {
