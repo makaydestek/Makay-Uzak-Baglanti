@@ -1,3 +1,4 @@
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -85,6 +86,31 @@ android {
             isMinifyEnabled = false
             isShrinkResources = false
         }
+
+        // Windows -> Android YONUNDE uzak kontrol varyanti.
+        //
+        // Bu tip AccessibilityService BILDIRIR; varsayilan `release` BILDIRMEZ.
+        // NEDEN AYRI: Google Play Protect, yandan yükleme (sideload) yapilan ve
+        // AccessibilityService bildiren uygulamalari TAMAMEN ENGLIYOR — yalnizca
+        // "uyari + Yine de kur" degil, kurulum yapilamiyor. Eko sistemin diger
+        // uygulamalarinda accessibility servisi oldugu icin onlar uyarida kalir.
+        //
+        // `release` her seydenOnce gelir: ekran paylasimi, dosya, sohbet, pano,
+        // mikrofon/hoparlor VE Android -> Windows uzak kontrol (ana destek
+        // senaryosu) bu varyantta da calisir. Yalnizca Windows -> Android
+        // kontrol eksiktir, cunku Android girdi enjeksiyonu icin yalnizca
+        // AccessibilityService'e izin verir.
+        //
+        // uretim: gradlew assembleKontrolRelease
+        create("kontrol") {
+            initWith(getByName("release"))
+            // `initWith` tum uygulama ozelliklerini kopyalamaz (ornegin kaynak
+            // budamayi). release ile BIREBIR ayni davranmasi icin acikca yazilir:
+            // aksi halde kontrol APK'si ~0.4 MB buyur ve budama farkli calisir.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            matchingFallbacks += "release"
+        }
     }
 
     compileOptions {
@@ -157,55 +183,87 @@ fun deleteStrayDeliveryApks(keepDir: java.io.File) {
     check(keepDir.exists())
 }
 
+// Dosyanin SHA-256'si (kucuk harf hex). Windows PowerShell'e gerek kalmaz.
+fun sha256Hex(f: java.io.File): String {
+    val md = MessageDigest.getInstance("SHA-256")
+    f.inputStream().use { input ->
+        val buf = ByteArray(1 shl 16)
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            md.update(buf, 0, n)
+        }
+    }
+    return md.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+}
+
 tasks.register("publishReleaseApk") {
     group = "distribution"
-    description = "Release APK + SHA-256'yi yalnizca APK/ klasorune yazar; baska klasordeki kopyalari siler"
+    description = "Temel + kontrol APK'larini, SHA-256'larini ve R8 haritalarini yalnizca APK/ klasorune yazar"
+    // `assembleRelease` bu gorevi finalize eder; buradan kontrol varyanti da
+    // istenir — tek komut iki APK'yi de uretir. (Tersi dongu olustururdu.)
+    dependsOn("assembleKontrol")
     doLast {
-        val src = layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
-        check(src.exists()) { "APK bulunamadi: ${src.absolutePath}" }
         val apkDir = rootProject.layout.projectDirectory.dir("APK").asFile
         apkDir.mkdirs()
         val ver = rootProject.file("VERSION.txt").readText().trim()
-        val named = apkDir.resolve("MakayRemote_v$ver.apk")
-        val shaFile = apkDir.resolve("MakayRemote_v$ver.apk.sha256")
-        val staging = apkDir.resolve(".staging-app-release.apk")
 
-        src.copyTo(staging, overwrite = true)
-        apkDir.listFiles()?.forEach { f ->
-            if (f.isFile && f.name != staging.name) f.delete()
-        }
-        staging.copyTo(named, overwrite = true)
-        staging.delete()
-
-        // R8 obfuscation haritasi — release APK'nin stack trace'leri buradan
-        // cozulebilir. APK ile ayni klasorde (surumli adla) ve GitHub Release
-        // asset'i olarak yayinlanir. Eski surumun haritasi dosya adinda
-        // oldugundan yeni yayinda kendiliginden degisir.
-        val mappingSrc = layout.buildDirectory.file("outputs/mapping/release/mapping.txt").get().asFile
-        val mappingOut = apkDir.resolve("MakayRemote_v$ver-mapping.txt")
-        if (mappingSrc.exists()) {
-            mappingSrc.copyTo(mappingOut, overwrite = true)
-        } else {
-            mappingOut.delete()
-        }
-
-        val ps = listOf(
-            "powershell", "-NoProfile", "-Command",
-            "\$h=(Get-FileHash -Algorithm SHA256 -Path '${named.absolutePath.replace("'", "''")}').Hash.ToLower(); " +
-                "Set-Content -Path '${shaFile.absolutePath.replace("'", "''")}' -Value (\$h + '  MakayRemote_v$ver.apk') -Encoding ascii; " +
-                "Write-Output \$h"
+        // (hedef ad, ham APK, R8 haritasi)
+        //   TEMEL   : Play Protect engellemez; Android -> Windows kontrol dahil her sey calisir.
+        //   KONTROL : Windows -> Android kontrol (AccessibilityService); yandan yüklemede uyarir.
+        val items = listOf(
+            Triple(
+                "MakayRemote_v$ver.apk",
+                layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile,
+                layout.buildDirectory.file("outputs/mapping/release/mapping.txt").get().asFile
+            ),
+            Triple(
+                "MakayRemote_v$ver-kontrol.apk",
+                layout.buildDirectory.file("outputs/apk/kontrol/app-kontrol.apk").get().asFile,
+                layout.buildDirectory.file("outputs/mapping/kontrol/mapping.txt").get().asFile
+            )
         )
-        val proc = ProcessBuilder(ps).redirectErrorStream(true).start()
-        val hex = proc.inputStream.bufferedReader().readText().trim()
-        check(proc.waitFor() == 0 && hex.length == 64) { "SHA-256 olusturulamadi: $hex" }
+        items.forEach { (_, src, _) ->
+            check(src.exists()) { "APK bulunamadi: ${src.absolutePath}" }
+        }
+
+        // 1) Ham ciktilari staging'e tasi. deleteStrayDeliveryApks APK/ disindaki
+        //    TUM .apk dosyalarini sildigi icin kaynaklar orada kalamaz.
+        val staged = items.map { (name, src, mapping) ->
+            val st = apkDir.resolve(".staging-$name")
+            src.copyTo(st, overwrite = true)
+            Triple(name, st, mapping)
+        }
+
+        // 2) APK/ klasorunu (staging disinda) bosalt — eski surumler temizlenir.
+        apkDir.listFiles()?.forEach { f ->
+            if (f.isFile && !f.name.startsWith(".staging-")) f.delete()
+        }
+
+        // 3) Yerlestir: APK + R8 haritasi + SHA-256
+        val delivered = staged.map { (name, st, mapping) ->
+            val named = apkDir.resolve(name)
+            st.copyTo(named, overwrite = true)
+
+            // R8 obfuscation haritasi — APK ile ayni klasorde (surumli adla) ve
+            // GitHub Release asset'i olarak yayinlanir.
+            val mapOut = apkDir.resolve(name.removeSuffix(".apk") + "-mapping.txt")
+            if (mapping.exists()) mapping.copyTo(mapOut, overwrite = true) else mapOut.delete()
+
+            Triple(name, named, sha256Hex(named))
+        }
 
         deleteStrayDeliveryApks(apkDir)
+        staged.forEach { (_, st, _) -> if (st.exists()) st.delete() }
 
-        check(named.exists()) { "Teslim APK APK/ klasorunde yok: ${named.absolutePath}" }
-        println("Published: ${named.absolutePath}")
-        println("SHA-256  : ${shaFile.absolutePath}")
+        delivered.forEach { (name, named, hex) ->
+            check(named.exists()) { "Teslim APK APK/ klasorunde yok: ${named.absolutePath}" }
+            // sha256sum uyumlu bicim: "<hash>  <dosya>"
+            apkDir.resolve("$name.sha256").writeText("$hex  $name")
+            println("Published: ${named.absolutePath}")
+            println("SHA-256  : $hex")
+        }
         println("Version  : $ver (versionCode=$appVersionCode)")
-        println("Fingerprint: $hex")
         println("Teslimat: yalnizca ${apkDir.absolutePath}")
     }
 }

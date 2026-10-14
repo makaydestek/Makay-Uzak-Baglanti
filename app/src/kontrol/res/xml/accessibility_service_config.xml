@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Erisilebilirlik servisi tanimi.
+  Erisilebilirlik servisi tanimi — yalnizca `kontrol` derleme tipi.
 
   `canPerformGestures` ZORUNLUDUR: `dispatchGesture` (dokunma/surukleme)
   yalnizca bu ozellik acikken calisir.

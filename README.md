@@ -20,13 +20,39 @@ doğrulaması, aynı mesaj tipleri. Yani Android ↔ Windows her iki yönde de
 | Özellik | Android → Windows | Windows → Android |
 |---|---|---|
 | Ekran paylaşımı | ✅ | ✅ |
-| Uzak kontrol (fare/klavye) | ✅ | ✅ *(Erişilebilirlik servisi gerekir)* |
+| Uzak kontrol (fare/klavye) | ✅ | ✅ *(`-kontrol` APK gerekir)* |
 | Dosya gönderimi | ✅ | ✅ |
 | Sohbet | ✅ | ✅ |
 | Pano (panodan kopyala/yapıştır) | ✅ | ✅ *(onay ister)* |
 | Mikrofon durumu | ✅ | ✅ |
 | Hoparlör yönlendirme | ✅ | — |
 | Bağlantı kurma (oda + şifre) | ✅ | ✅ |
+
+---
+
+## İndireceğiniz APK
+
+Her GitHub Release'de **iki APK** vardır; ihtiyacınıza göre birini seçin:
+
+| APK | Ne işe yarar | Kurulum |
+|---|---|---|
+| `MakayRemote_vX.Y.Z.apk` | **Temel.** Ekran paylaşımı, dosya, sohbet, pano, mikrofon/hoparlör **ve Android → Windows uzak kontrol.** Günlük kullanım için budur. | ✅ Diğer Makay uygulamalarıyla aynı şekilde kurulur |
+| `MakayRemote_vX.Y.Z-kontrol.apk` | Temeldeki her şey **+ Windows → Android uzak kontrol** (bilgisayardan telefonu yönetme). | ⚠️ Erişilebilirlik servisi bildirdiği için yandan yüklemede engellenebilir |
+
+**Neden ikisi?** Android, bir uygulamanın kendi penceresi dışında girdi
+enjekte etmesine yalnızca erişilebilirlik servisiyle izin verir (`INJECT_EVENTS`
+sistem imzası gerektirir, uygulamalara verilmez). Google ise erişilebilirlik
+bildiren yandan yükleme yapılan uygulamaları **bilerek** engeller — aksi halde
+her uygulama telefonu sessizce yönetebilirdi. Bu yüzden:
+
+- **Telefon ekranını bilgisayardan yönetmeyecekseniz** temel APK yeterlidir ve
+  sorunsuz kurulur.
+- **Bu özellik gerekiyorsa** `-kontrol` APK'sını kurun. Google engeli çıkarsa
+  telefonda **Ayarlar → Google → Play Protect → "Uygulamaları tara"**
+  geçici kapatılıp kurulum yapılıp tekrar açılabilir. Bu, AnyDesk gibi uzaktan
+  yönetim uygulamalarında da geçerlidir.
+
+İndirme: [GitHub Releases](https://github.com/makaydestek/Makay-Uzak-Baglanti/releases)
 
 ---
 
@@ -84,6 +110,9 @@ Bağlantı, eşleşme ağı (MQTT) üzerinden eşleşilir, ardından **doğrudan
 ---
 
 ## Uzak kontrolü açma (Windows → Android)
+
+> **Ön koşul:** Bu bölüm yalnızca **`-kontrol` APK'sına** aittir. Temel APK'da
+> bu özellik pakette yoktur — bkz. [İndireceğiniz APK](#indireceğiniz-apk).
 
 Windows'tan telefonu kontrol etmek için **bir kez** gerekir:
 
@@ -204,16 +233,25 @@ doğrular.
 ## Derleme ve test
 
 ```bat
-:: birim testleri (109 test)
+:: birim testleri (121 test x debug/release/kontrol varyantlari)
 gradlew.bat :app:testDebugUnitTest
 gradlew.bat :app:testReleaseUnitTest
 
-:: release APK (imza local.properties'teki RELEASE_* anahtarlarından gelir)
+:: TEMEL APK (imza local.properties'teki RELEASE_* anahtarlarindan gelir)
 gradlew.bat :app:assembleRelease
+
+:: KONTROL APK (Windows -> Android uzak kontrol + AccessibilityService)
+gradlew.bat :app:assembleKontrol
 ```
 
+`assembleRelease` tek basina calistirildiginda `publishReleaseApk` gorevi **her iki
+APK'yi de** uretip `APK\` klasörüne yazar. Kontrol varyanti `app/build.gradle.kts`
+icindeki `kontrol` derleme tipidir; release yapisini miras alir ve tek fark
+`src/kontrol/` kaynak kümesinin manifest'e birlestirilmesidir
+(`AndroidManifest.xml` + erisilebilirlik servisi + kaynaklari).
+
 Raporlar: `app\build\reports\tests\` ve `app\build\test-results\`.
-CI her push'ta `.github/workflows/ci.yml` ile koşar.
+CI her push'ta `.github/workflows/ci.yml` ile kosar.
 
 **Kaynak kod yolları:** release derlemesinde kaynak yolları kısaltılır ve PNG
 yeniden kodlanır; bu yüzden kaynakla hash **farklı** olabilir. Doğrulama
@@ -228,10 +266,10 @@ Tek komut — **`APK-Hazirla.bat`**:
 | Adım | Ne olur |
 |---|---|
 | 1 | Açık (commit'lenmemiş) değişiklikler commit edilir |
-| 2 | `VERSION.txt` otomatik artar (`1.0.5` → `1.0.6`) |
-| 3 | `gradlew assembleRelease` → `APK\…v1.0.6.apk` + `.apk.sha256` + `mapping.txt` |
+| 2 | `VERSION.txt` otomatik artar (`1.0.9` → `1.0.10`) |
+| 3 | `gradlew assembleRelease` → **iki APK**: `APK\…v1.0.10.apk` (temel) + `…v1.0.10-kontrol.apk`; her ikisi için `.apk.sha256` + `mapping.txt` |
 | 4 | Sürüm commit'i oluşturulur ve `origin main`'e itilir |
-| 5 | GitHub Release açılır, APK + SHA + **mapping** yüklenir (tag = sürüm) |
+| 5 | GitHub Release açılır, **6 asset** yüklenir (2 APK + 2 SHA + 2 mapping) |
 | 6 | Eski release'ler + etiketleri silinir, yalnızca yenis kalır |
 
 Yalnızca `VERSION.txt` commit'lenip push edilir; APK ve derleme çıktıları
@@ -241,7 +279,9 @@ ve APK hiçbir zaman commit edilmez.**
 GitHub girişi bir kez: **`Gh-Giris.bat`** (`repo` + `workflow` kapsamı gerekir).
 
 `versionCode`, `VERSION.txt`'den hesaplanır:
-`major*1_000_000 + minor*1_000 + patch` → `1.0.5` = `1000005`.
+`major*1_000_000 + minor*1_000 + patch` → `1.0.10` = `1000010`.
+Sürüm dizisi Makay ekosistemindeki gibidir: `1.0.10 → … → 1.0.99`, ondan sonra
+`1.1.0` (betik `patch > 99` olduğunda `minor`'ı artırır).
 
 ---
 
