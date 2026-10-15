@@ -1,6 +1,9 @@
 package com.makay.remote.ui.screens
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,10 +12,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -29,8 +38,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.makay.remote.BuildConfig
+import com.makay.remote.R
+import com.makay.remote.ui.theme.MakayColors
 import com.makay.remote.ui.theme.MakayTheme
 
 /**
@@ -194,7 +209,102 @@ fun SettingsScreen(
             Text("Kaydet ve dön", style = MaterialTheme.typography.titleMedium, color = c.text)
         }
 
+        Spacer(Modifier.height(32.dp))
+
+        // ---------- Hakkında ----------
+        // Makay eko sistemindeki diger uygulamalarla (Makay Cleaner, Makay
+        // FileManager) birebir ayni yapidadir: baslik + kart icinde
+        // uygulama adi / surum / gelistirici / telif metni.
+        AboutSection(c)
+
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+/**
+ * "Hakkında" bolumu — eko sistemin ortak Ayarlar>Hakkinda yapisi.
+ *
+ *  - Uygulama adi  : R.string.app_name (basligiyla senkron)
+ *  - Surum         : BuildConfig.VERSION_NAME (VERSION.txt ile ayni)
+ *  - Gelistirici   : ortak Makay metni
+ *  - Telif         : ortak Makay metni
+ */
+@Composable
+private fun AboutSection(c: MakayColors) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Rozet: resimdekiyle ayni sekilde yuksel kontrastli — acik temada
+        // koyu kutu + acik "i", koyu temada acik kutu + koyu "i".
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(c.text),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Info,
+                contentDescription = null,
+                tint = c.bg,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = "Hakkında",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = c.text
+        )
+    }
+
+    Spacer(Modifier.height(12.dp))
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = c.card),
+        border = BorderStroke(1.dp, c.cardBorder)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.app_name),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = c.text
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Sürüm: ${BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = c.muted
+            )
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(color = c.cardBorder)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "Geliştirici",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = c.text
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Bu uygulamanın tasarımı ve geliştirmesi Murat AKAY tarafından yapılmıştır.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = c.muted
+            )
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(color = c.cardBorder)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "© 2026 Tüm hakları saklıdır. Sideload / yerel dağıtım için hazırlanmıştır.",
+                style = MaterialTheme.typography.bodySmall,
+                color = c.muted
+            )
+        }
     }
 }
 
@@ -213,7 +323,7 @@ private fun ThemeChip(
     label: String,
     selected: Boolean,
     modifier: Modifier,
-    c: com.makay.remote.ui.theme.MakayColors,
+    c: MakayColors,
     onClick: () -> Unit
 ) {
     OutlinedButton(
@@ -241,7 +351,7 @@ private fun SwitchRow(
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    c: com.makay.remote.ui.theme.MakayColors
+    c: MakayColors
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
