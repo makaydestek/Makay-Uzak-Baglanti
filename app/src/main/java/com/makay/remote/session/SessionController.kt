@@ -772,6 +772,26 @@ class SessionController(
         }
     }
 
+    /**
+     * Geri -> "Evet" ile TAM kapanis icin SENKRON yol.
+     *
+     * `shutdown()` coroutine icinde calistigi icin surec bitene kadar MQTT /
+     * ekran paylasim servisi yasayabilir (arka planda calisma + pil harcama).
+     * Burada her sey senkron kapatilir: peer'a BYE gonderilir, MQTT broker
+     * baglantilari disconnectForcibly ile kesilir ve MediaProjection
+     * foreground servisi durdurulur. Cagiran taraf sureci de sonlandirir.
+     */
+    fun shutdownNow() {
+        intentionalClose = true
+        joinRetryJob?.cancel()
+        clearConnectTimeout()
+        runCatching { peer?.close("shutdown") }
+        peer = null
+        runCatching { signal?.close() }
+        signal = null
+        runCatching { com.makay.remote.service.ScreenShareService.stop(appContext) }
+    }
+
     // ---------------- yardimcilar ----------------
 
     private fun reset(keepSignal: Boolean) {

@@ -1,5 +1,6 @@
 package com.makay.remote
 
+import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -8,6 +9,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import com.makay.remote.session.SessionController
 import com.makay.remote.session.SessionViewModel
 import com.makay.remote.update.AppUpdateHost
 import com.makay.remote.update.AppUpdateRepository
@@ -26,8 +28,8 @@ class MainActivity : ComponentActivity() {
     private val _updateAutoDownload = MutableStateFlow(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         consumeUpdateIntent(intent)
         setContent {
             // Tema tercihi: "system" sistem ayarini, digerleri zorlar.
@@ -76,8 +78,47 @@ class MainActivity : ComponentActivity() {
         _updatePromptToken.set(System.currentTimeMillis())
     }
 
+    override fun onBackPressed() {
+        val state = vm.state.value
+        when (state) {
+            is SessionController.State.Connected -> {
+                // Bağlı iken geri -> çıkış onayı
+                showYesNoDialog(
+                    "Uygulamadan Çıkış Yapmak İstiyor musunuz?",
+                    { vm.controller.shutdownNow(); finish() }, // Evet
+                    { /* Hayır - iptal */ }                                               // Hayır
+                )
+            }
+            else -> {
+                // Diğer ekranlar (Idle, Hosting, vb.) -> çıkış onayı
+                showYesNoDialog(
+                    "Uygulamadan Çıkış Yapmak İstiyor musunuz?",
+                    { vm.controller.shutdownNow(); finish() }, // Evet
+                    { /* Hayır - iptal */ }                   // Hayır
+                )
+            }
+        }
+    }
+
+    private fun showYesNoDialog(
+        title: String,
+        onYes: () -> Unit,
+        onNo: () -> Unit
+    ) {
+        // Activity içinde Dialog göstermek için temel bir approach.
+        // android.app.AlertDialog base sınıfı, ekstra appcompat bağımlılığı gerektirmeden
+        // kullanılabilir; Material Design diyalogu projede Material3 kullanıyorsak
+        // uygun MaterialDialog e geçilebilir.
+        AlertDialog.Builder(this)
+            .setTitle("Uyarı")
+            .setMessage(title)
+            .setPositiveButton("Evet") { _, _ -> onYes() }
+            .setNegativeButton("Hayır") { _, _ -> onNo() }
+            .show()
+    }
+
     override fun onDestroy() {
-        if (isFinishing) vm.controller.shutdown()
+        if (isFinishing) vm.controller.shutdownNow()
         super.onDestroy()
     }
 }
