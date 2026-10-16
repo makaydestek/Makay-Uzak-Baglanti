@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="incoming" path="incoming/" />
+    <!-- Uygulama içi güncelleme: AppUpdateRepository indirilen APK'yı
+         cacheDir/updates/ altına yazar; bu yol FileProvider'da TANIMLI
+         DEĞİLSE getUriForFile fırlatır ve kurulum ekranı hiç açılmaz. -->
+    <cache-path name="updates" path="updates/" />
     <files-path name="files" path="." />
     <external-files-path name="ext_files" path="." />
 </paths>

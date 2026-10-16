@@ -29,18 +29,11 @@
 -keep class com.makay.remote.core.SdpCode$Payload { *; }
 -keep class com.makay.remote.core.SdpCode$Decoded { *; }
 
-# ---- Guncelleme denetimi modelleri ----
-# `UpdateChecker$Release` alanlari YALNIZCA Gson tarafindan yansima ile yazilir;
-# kod icinde hicbir atama olmadigi icin R8 "bu alan hep null" sonucuna varip
-# fetch() icindeki `tagName`-sonrasi tum koku (surum karsilastirmasi ve
-# `UpdateInfo(...)` kurulumu) olumsuz dead-code olarak siliyordu. Sonuc:
-# guncelleme dialogu release APK'da hic gorunmuyordu ve guncelleme denetimi
-# her zaman null donuyordu. Ayrica Gson, constructor'u reflection ile cagirir.
-# `UpdateInfo` ise UI akisinin (RemoteApp -> SessionViewModel.updateInfo)
-# degerini olusturur; R8 tarafindan silinirse `update?.let { ... }` blogu ve
-# yalnizca onun cagirdigi `dismissUpdate()` de birlikte silinir.
--keep class com.makay.remote.core.UpdateChecker$Release { *; }
--keep class com.makay.remote.core.UpdateChecker$UpdateInfo { *; }
+# ---- Guncelleme denetimi ----
+# (Onceki Gson tabanli `UpdateChecker` kaldirildi; yerine org.json ile
+#  AppUpdateRepository geldi. org.json platform API'dir ve yansima gerektirmez,
+#  bu yuzden burada -keep kurali gerekmiyor. Indirilen APK'nin dogrulanmasi
+#  ApkIntegrityVerifier tarafindan imza + SHA-256 ile yapilir.)
 
 # ---- Compose ----
 -dontwarn androidx.compose.**

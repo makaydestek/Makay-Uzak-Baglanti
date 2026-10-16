@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.makay.remote.data.SettingsStore
-import com.makay.remote.core.UpdateChecker
 import com.makay.remote.rtc.ControlPayload
 import com.makay.remote.rtc.FileTransferEngine
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -100,22 +99,6 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
         settings.themeMode = mode
         themeMode.value = mode
     }
-
-    /**
-     * Uygulama ici guncelleme denetimi. Sonuc `null` ise guncelleme yoktur
-     * veya denetim basarisizdir (cevrimdisi olabilir) — her iki durumda da
-     * UI'da hicbir sey gosterilmez.
-     */
-    val updateInfo = MutableStateFlow<UpdateChecker.UpdateInfo?>(null)
-
-    fun checkForUpdate(force: Boolean = false) {
-        if (updateInfo.value != null) return // zaten gosteriliyor
-        viewModelScope.launch {
-            updateInfo.value = UpdateChecker.check(force = force)
-        }
-    }
-
-    fun dismissUpdate() { updateInfo.value = null }
 
     /** Ekran paylasimini durdurur (servisi kapatir). */
     fun stopScreenShare() {

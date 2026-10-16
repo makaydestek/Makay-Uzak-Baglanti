@@ -1,5 +1,6 @@
 package com.makay.remote.ui.screens
 
+import android.app.Application
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +33,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,12 +41,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.makay.remote.BuildConfig
 import com.makay.remote.R
+import com.makay.remote.update.AppUpdateUiState
+import com.makay.remote.update.AppUpdateViewModel
+import com.makay.remote.update.findActivity
 import com.makay.remote.ui.theme.MakayColors
 import com.makay.remote.ui.theme.MakayTheme
 
@@ -81,6 +89,16 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     val c = MakayTheme.c
+
+    // Guncelleme ekrani (AppUpdateHost) ile AYNI ViewModel ornegi kullanilir;
+    // ViewModel Activity'ye baglidir, boylece buradan yapilan kontrol sonucu
+    // MainActivity'deki ayni diyalogda gosterilir.
+    val ctx = LocalContext.current
+    val app = ctx.applicationContext as Application
+    val updateVm: AppUpdateViewModel? = (ctx.findActivity() as? FragmentActivity)?.let { fa ->
+        viewModel(viewModelStoreOwner = fa, factory = AppUpdateViewModel.Factory(app))
+    }
+    val updateState = updateVm?.state?.collectAsState()?.value
 
     Column(
         modifier = Modifier
@@ -200,6 +218,15 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(24.dp))
 
+        // ---------- Güncelleme ----------
+        // Makay ekosistemindeki diger uygulamalarla (Cleaner, File Manager,
+        // Launcher) ayni akis: kontrol -> "Guncelle / Ertele" diyalogu ->
+        // uygulama ici indirme + imza/SHA-256 dogrulamasi -> sistem kurulum
+        // ekrani. Tarayiciya YONLENDIRME YAPILMAZ.
+        UpdateCheckButton(c, updateVm, updateState)
+
+        Spacer(Modifier.height(16.dp))
+
         OutlinedButton(
             onClick = onBack,
             modifier = Modifier
@@ -218,6 +245,52 @@ fun SettingsScreen(
         AboutSection(c)
 
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+/**
+ * "Güncelleme kontrol et" düğmesi — Makay ekosistemindeki diğer uygulamaların
+ * Ayarlar'daki güncelleme satırıyla aynı işlevi görür.
+ *
+ * Basıldığında `AppUpdateViewModel.checkManual()` çağrılır; sonuç, uygulama
+ * açılışında MainActivity'nin `AppUpdateHost`'una bağladığı AYNI diyalogda
+ * gösterilir. İndirme + doğrulama + kurulum uygulama içinden yapılır,
+ * tarayıcı açılmaz.
+ */
+@Composable
+private fun UpdateCheckButton(
+    c: MakayColors,
+    updateVm: AppUpdateViewModel?,
+    updateState: AppUpdateUiState?
+) {
+    val busy = updateState?.checking == true || updateState?.downloading == true
+
+    OutlinedButton(
+        onClick = { updateVm?.checkManual() },
+        enabled = updateVm != null && !busy,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+    ) {
+        Text(
+            text = when {
+                updateState?.checking == true -> "🔄 Kontrol ediliyor…"
+                updateState?.downloading == true -> "%${updateState.progress} indiriliyor…"
+                else -> "🔄 Güncelleme kontrol et"
+            },
+            style = MaterialTheme.typography.titleMedium,
+            color = c.text
+        )
+    }
+
+    val msg = updateState?.statusMessage ?: updateState?.error
+    if (msg != null) {
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = msg,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (updateState?.error != null) c.danger else c.muted
+        )
     }
 }
 
