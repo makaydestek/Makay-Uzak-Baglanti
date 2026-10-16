@@ -1,43 +1,51 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Android 13+ tema simgesi (monochrome) icin yalniz glif.
-     Arkaplan/gradyan yok; sistem tek renk uygular. Glif adaptive
-     guvenli bolgeye (merkez 54,54 - yaricap 33) tam oturacak
-     olculerde tasarildi. -->
+     Arkaplan/gradyan yok; sistem tek renk uygular.
+     Glif, ana ikonla birebir ayni kompozisyonun vektor karsiligidir:
+       - 1024 uzayindaki her koordinat   dp = 8.64 + v * 0.08203
+         (ana ikondaki %8 adaptive inset ile ayni haritalama)
+       - ekran govdesi ve telefon, dolu halka yerine AYNI kalinlikta
+         kontur olarak cizilir (gradyan ekrani temsil eder)
+       - telefon -10 derece egiktir, merkez (72.62, 43.91) uzerinden
+     Guvenli bolge: merkez 54,54 - yaricap 33 (21..87 dp) icinde kalir. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- ekran govdesi (kontur) -->
+    <!-- ekran govdesi: 2.79 dp kalinlikta kontur (bezel) -->
     <path
-        android:pathData="M33.2,35 H62.8 A2.2,2.2 0 0 1 65,37.2 V53.8 A2.2,2.2 0 0 1 62.8,56 H33.2 A2.2,2.2 0 0 1 31,53.8 V37.2 A2.2,2.2 0 0 1 33.2,35 Z"
+        android:pathData="M23.74,29.73 L51.78,29.73 A2.22,2.22 0 0 1 54,31.95 L54,47.69 A2.22,2.22 0 0 1 51.78,49.91 L23.74,49.91 A2.22,2.22 0 0 1 21.52,47.69 L21.52,31.95 A2.22,2.22 0 0 1 23.74,29.73 Z"
         android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="3.4"
+        android:strokeWidth="2.79"
         android:strokeLineCap="round"
         android:strokeLineJoin="round" />
 
-    <!-- ekran ici -->
-    <path
-        android:pathData="M36.4,39.4 H59.6 A1,1 0 0 1 60.6,40.4 V50.6 A1,1 0 0 1 59.6,51.6 H36.4 A1,1 0 0 1 35.4,50.6 V40.4 A1,1 0 0 1 36.4,39.4 Z"
-        android:fillColor="#FFFFFFFF" />
-
     <!-- ayak boyunu -->
     <path
-        android:pathData="M46.8,56 H50.2 V61 H46.8 Z"
+        android:pathData="M33.54,51.30 H41.99 V55.89 H33.54 Z"
         android:fillColor="#FFFFFFFF" />
 
-    <!-- ayak tabani -->
+    <!-- ayak tabani (iki ucu yariyuvarlak) -->
     <path
-        android:pathData="M41.4,60.6 H55.6 A1.4,1.4 0 0 1 55.6,63.4 H41.4 A1.4,1.4 0 0 1 41.4,60.6 Z"
+        android:pathData="M44.655,55.65 A1.765,1.765 0 0 1 44.655,59.18 L30.875,59.18 A1.765,1.765 0 0 1 30.875,55.65 Z"
         android:fillColor="#FFFFFFFF" />
 
-    <!-- sinyal kemikleri -->
+    <!-- sinyal yaylari: telefondan monitore dogru -->
     <path
-        android:pathData="M63.39,34.52 A4.5,4.5 0 0 1 67.48,38.61
-                          M63.70,31.03 A8,8 0 0 1 70.97,38.30
-                          M64.00,27.54 A11.5,11.5 0 0 1 74.46,38.00"
+        android:pathData="M62.04,42.62 A2.3,2.3 0 0 1 62.04,38.64
+                          M60.98,44.47 A4.43,4.43 0 0 1 60.98,36.79
+                          M59.91,46.31 A6.56,6.56 0 0 1 59.91,34.95"
         android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="3"
+        android:strokeWidth="1.23"
         android:strokeLineCap="round" />
+
+    <!-- telefon: 1.97 dp kalinlikta kontur, -10 derece egik -->
+    <path
+        android:pathData="M66.68,31.39 L73.94,30.11 A1.48,1.48 0 0 1 75.65,31.31 L79.78,54.73 A1.48,1.48 0 0 1 78.58,56.45 L71.32,57.73 A1.48,1.48 0 0 1 69.61,56.53 L65.48,33.11 A1.48,1.48 0 0 1 66.68,31.39 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.97"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>
