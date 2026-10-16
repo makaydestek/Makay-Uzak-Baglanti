@@ -22,9 +22,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.makay.remote.ui.theme.MakayTheme
@@ -54,14 +54,17 @@ fun AppUpdateHost(
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
-    val fragmentActivity = context.findActivity() as? FragmentActivity
-    val viewModel: AppUpdateViewModel = if (fragmentActivity != null) {
-        viewModel(viewModelStoreOwner = fragmentActivity, factory = AppUpdateViewModel.Factory(app))
-    } else {
-        viewModel(factory = AppUpdateViewModel.Factory(app))
-    }
-    val state by viewModel.state.collectAsState()
     val activity = context.findActivity()
+    // ViewModel'i Activity'nin ViewModelStore'una bagla; Ayarlar ekranindaki
+    // "Guncelleme kontrol et" dugmesi de AYNI ornegi kullanir, boylece
+    // dugmeden cagirilan kontrol buradaki diyalogu acar.
+    //
+    // NOT: MainActivity `ComponentActivity`'dir, `FragmentActivity` DEGIL.
+    // Referanstaki `as? FragmentActivity` dokuumu bu projede hep null donerdi.
+    val viewModel: AppUpdateViewModel = (activity as? ViewModelStoreOwner)?.let { owner ->
+        viewModel(viewModelStoreOwner = owner, factory = AppUpdateViewModel.Factory(app))
+    } ?: viewModel(factory = AppUpdateViewModel.Factory(app))
+    val state by viewModel.state.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     val c = MakayTheme.c
 

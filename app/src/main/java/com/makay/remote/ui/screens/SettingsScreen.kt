@@ -46,7 +46,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.makay.remote.BuildConfig
 import com.makay.remote.R
@@ -90,15 +90,22 @@ fun SettingsScreen(
 ) {
     val c = MakayTheme.c
 
-    // Guncelleme ekrani (AppUpdateHost) ile AYNI ViewModel ornegi kullanilir;
-    // ViewModel Activity'ye baglidir, boylece buradan yapilan kontrol sonucu
-    // MainActivity'deki ayni diyalogda gosterilir.
+    // Guncelleme ekrani (AppUpdateHost) ile AYNI ViewModel ornegi kullanilir:
+    // ikisi de Activity'nin ViewModelStore'una baglidir, boylece buradan
+    // yapilan kontrol MainActivity'deki ayni diyalogu acar.
+    //
+    // NOT: MainActivity `ComponentActivity`'dir, `FragmentActivity` DEGIL.
+    // Referanstaki `as? FragmentActivity` dokuumu burada da hep null donerdi;
+    // bu da `enabled = (updateVm != null)` ile dugmenin sessizce devre disi
+    // kalmasina ("hicbir sey yapmiyor" gorunumu) yol acardi. Bu yuzden
+    // dokuum Activity'nin kendisine (ViewModelStoreOwner) yapilir ve yedek
+    // olarak composition-local owner kullanilir; hicbir yolda null kalmaz.
     val ctx = LocalContext.current
     val app = ctx.applicationContext as Application
-    val updateVm: AppUpdateViewModel? = (ctx.findActivity() as? FragmentActivity)?.let { fa ->
-        viewModel(viewModelStoreOwner = fa, factory = AppUpdateViewModel.Factory(app))
-    }
-    val updateState = updateVm?.state?.collectAsState()?.value
+    val updateVm: AppUpdateViewModel = (ctx.findActivity() as? ViewModelStoreOwner)?.let { owner ->
+        viewModel(viewModelStoreOwner = owner, factory = AppUpdateViewModel.Factory(app))
+    } ?: viewModel(factory = AppUpdateViewModel.Factory(app))
+    val updateState = updateVm.state.collectAsState().value
 
     Column(
         modifier = Modifier
@@ -260,22 +267,23 @@ fun SettingsScreen(
 @Composable
 private fun UpdateCheckButton(
     c: MakayColors,
-    updateVm: AppUpdateViewModel?,
-    updateState: AppUpdateUiState?
+    updateVm: AppUpdateViewModel,
+    updateState: AppUpdateUiState
 ) {
-    val busy = updateState?.checking == true || updateState?.downloading == true
+    // VM artik zorunlu (null olamaz); buton yalnizca is bittiginde pasifleşir.
+    val busy = updateState.checking || updateState.downloading
 
     OutlinedButton(
-        onClick = { updateVm?.checkManual() },
-        enabled = updateVm != null && !busy,
+        onClick = { updateVm.checkManual() },
+        enabled = !busy,
         modifier = Modifier
             .fillMaxWidth()
             .height(52.dp)
     ) {
         Text(
             text = when {
-                updateState?.checking == true -> "🔄 Kontrol ediliyor…"
-                updateState?.downloading == true -> "%${updateState.progress} indiriliyor…"
+                updateState.checking -> "🔄 Kontrol ediliyor…"
+                updateState.downloading -> "%${updateState.progress} indiriliyor…"
                 else -> "🔄 Güncelleme kontrol et"
             },
             style = MaterialTheme.typography.titleMedium,
@@ -283,13 +291,14 @@ private fun UpdateCheckButton(
         )
     }
 
-    val msg = updateState?.statusMessage ?: updateState?.error
+    // Tepki burada gorunur: "Uygulama güncel" / "Yeni sürüm: X" / hata.
+    val msg = updateState.statusMessage ?: updateState.error
     if (msg != null) {
         Spacer(Modifier.height(8.dp))
         Text(
             text = msg,
             style = MaterialTheme.typography.bodySmall,
-            color = if (updateState?.error != null) c.danger else c.muted
+            color = if (updateState.error != null) c.danger else c.muted
         )
     }
 }
