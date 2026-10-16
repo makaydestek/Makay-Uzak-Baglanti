@@ -27,19 +27,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Windows tarafiyla **ayni protokol**:
  *   - Konu   : `makay/aio/v1/<ODA>`  (ODA: buyuk harf, sadece 0-9A-Z)
- *   - Broker: wss://broker.emqx.io:8084/mqtt, wss://broker.hivemq.com:8884/mqtt,
- *              wss://test.mosquitto.org:8081/mqtt
+ *   - Broker: wss://broker.emqx.io:8084/mqtt, wss://test.mosquitto.org:8081/mqtt
  *   - Yetki : her zarfta `pinHash` = SHA-256(oturum sifresi) eslesmeli
+ *
+ * NOT: `broker.hivemq.com` bu listede YOKTUR — Paho v5 MQTT-5 CONNECT
+ * gonderir, hivemq'un wss ucunda CONNACK gelmez (olcum: ~10 sn timeout),
+ * yani Android'de hic calismaz. Masaustu köprüsü (cloud-signal-bridge.js)
+ * MQTT 3.1.1 konustugu icin orada listelenmeye devam eder.
  */
-class MqttSignalClient(private val customBroker: String? = null) {
-
-    fun interface Listener {
-        fun onMessage(env: SignalEnvelope)
-    }
-
-    fun interface CloseListener {
-        fun onClosed()
-    }
+class MqttSignalClient(private val customBroker: String? = null) : SignalChannel {
 
     private val gson = com.makay.remote.core.WireJson.gson
     private val clients = mutableListOf<MqttAsyncClient>()
@@ -47,8 +43,8 @@ class MqttSignalClient(private val customBroker: String? = null) {
 
     private var topic: String? = null
     private var pinHash: String = ""
-    private var listener: Listener? = null
-    private var closeListener: CloseListener? = null
+    private var listener: SignalChannel.Listener? = null
+    private var closeListener: SignalChannel.CloseListener? = null
 
     /** Kendi yayinlarimizi yoksayabilmek icin. */
     private val selfTag: String = java.util.UUID.randomUUID().toString().take(8)
@@ -68,11 +64,11 @@ class MqttSignalClient(private val customBroker: String? = null) {
      *
      * @throws Exception eslesme agina ulasilamazsa
      */
-    suspend fun subscribe(
+    override suspend fun subscribe(
         room: String,
         password: String,
-        onMessage: Listener,
-        onClose: CloseListener?
+        onMessage: SignalChannel.Listener,
+        onClose: SignalChannel.CloseListener?
     ) {
         this.listener = onMessage
         this.closeListener = onClose
@@ -213,7 +209,7 @@ class MqttSignalClient(private val customBroker: String? = null) {
      * Odaya sinyal gonderir.
      * @throws MqttException eslesme agina yazilamazsa
      */
-    suspend fun publish(payload: SignalEnvelope) = withContext(Dispatchers.IO) {
+    override suspend fun publish(payload: SignalEnvelope) = withContext(Dispatchers.IO) {
         if (closed.get()) {
             Log.w(TAG, "Eslesme oturumu yok")
             throw MqttException(MqttException.REASON_CODE_CLIENT_EXCEPTION.toInt())
@@ -246,10 +242,9 @@ class MqttSignalClient(private val customBroker: String? = null) {
             Log.w(TAG, "Eslesme agina yazilamadi: ${lastError?.message}")
             throw lastError ?: MqttException(MqttException.REASON_CODE_CLIENT_EXCEPTION.toInt())
         }
-        true
     }
 
-    fun close() {
+    override fun close() {
         if (!closed.compareAndSet(false, true)) return
         clients.forEach {
             runCatching { if (it.isConnected) it.disconnectForcibly(200L, 200L, false) }
@@ -264,10 +259,17 @@ class MqttSignalClient(private val customBroker: String? = null) {
         private const val CONNECT_TIMEOUT_MS = 15_000L
         private const val PUBLISH_TIMEOUT_MS = 8_000L
 
-        /** Windows `cloud-signal-bridge.js:BROKERS` ile ayni sira. */
+        /**
+         * MQTT-5 ile calisan halka acik broker'lar (WSS).
+         *
+         * Windows `cloud-signal-bridge.js:BROKERS` dizisinden farkli: orada
+         * MQTT 3.1.1 konusan broker.hivemq.com da vardir; Android Paho v5
+         * MQTT-5 gonderdigi ve hivemq wss ucunda CONNACK gelmedigi icin
+         * (10 sn timeout) listeden cikarildi — erisilemeyen broker sona
+         * birakilmaz, ilk iki broker hizli gevis saglar.
+         */
         val DEFAULT_BROKERS = listOf(
             "wss://broker.emqx.io:8084/mqtt",
-            "wss://broker.hivemq.com:8884/mqtt",
             "wss://test.mosquitto.org:8081/mqtt"
         )
 

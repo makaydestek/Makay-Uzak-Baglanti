@@ -117,6 +117,13 @@ fun JoinFormScreen(
             )
         )
 
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "İpucu: Davet metninin tamamını (Kimlik, Şifre ve varsa Sinyal satırı) yapıştırın — bağlantı en sağlam yoldan kurulur.",
+            style = MaterialTheme.typography.bodySmall,
+            color = c.muted
+        )
+
         Spacer(Modifier.height(12.dp))
 
         OutlinedTextField(

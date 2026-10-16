@@ -5,20 +5,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * MqttSignalClient.buildBrokerList — masaustu `cloud-signal-bridge.js:BROKERS`
- * ile ayni varsayilan sirayi korur, kullanici broker'ini ONE alir.
+ * MqttSignalClient.buildBrokerList — varsayilan liste MQTT-5 ile calisan
+ * halka acik broker'lardir; kullanici broker'ini ONE alir.
+ *
+ * NOT: Windows `cloud-signal-bridge.js:BROKERS` (MQTT 3.1.1) listesinden
+ * farklidir: `broker.hivemq.com` wss ucunda MQTT-5 CONNACK vermez (Paho v5
+ * ile ~10 sn timeout), bu yuzden Android listesinde yer almaz.
  */
 class BrokerListTest {
 
     @Test
-    fun nullCustomFallsBackToWindowsBrokerOrder() {
+    fun nullCustomFallsBackToMqtt5BrokerOrder() {
         val list = MqttSignalClient.buildBrokerList(null)
         assertEquals(MqttSignalClient.DEFAULT_BROKERS, list)
-        // Windows `cloud-signal-bridge.js:BROKERS` sirasi
         assertEquals(
             listOf(
                 "wss://broker.emqx.io:8084/mqtt",
-                "wss://broker.hivemq.com:8884/mqtt",
                 "wss://test.mosquitto.org:8081/mqtt"
             ),
             list
@@ -83,11 +85,11 @@ class BrokerListTest {
         assertEquals("wss://broker.ornek.com:8084/mqtt", list.first())
     }
 
-    /** Varsayilan broker listesi Windows ile birebir ayni ve degerisiz. */
+    /** Varsayilan broker listesi MQTT-5 ile calisan, degerisiz adreslerden olusur. */
     @Test
     fun defaultBrokersAreUnique() {
         val b = MqttSignalClient.DEFAULT_BROKERS
-        assertEquals(3, b.size)
+        assertEquals(2, b.size)
         assertEquals(b.size, b.toSet().size)
         assertTrue(b.all { it.startsWith("wss://") })
     }

@@ -2,6 +2,8 @@ package com.makay.remote.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
 import com.makay.remote.BuildConfig
 
 /**
@@ -17,23 +19,42 @@ import com.makay.remote.BuildConfig
  *
  * Android'de masaustunun "ayni ag (LAN)" eslesmesi YOKTUR; burada bulut
  * (MQTT) eslesmesi kullanilir. Bu yuzden LAN'a ait alanlar tanimlanmaz.
+ *
+ * REAKTIFLIK: gorunum alanlari Compose snapshot durumu (`mutableStateOf`)
+ * ile tutulur; deger yazilinca hem SharedPreferences'e kalici yazilir hem
+ * de state guncellenir — boylece Ayarlar ekranindaki switch/metin alanlari
+ * GERI yapilmadan (ekran yeniden cizilmeden) aninda guncellenir.
  */
 class SettingsStore(context: Context) {
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences("makay_remote", Context.MODE_PRIVATE)
 
+    private fun stringState(key: String, default: String): MutableState<String> =
+        mutableStateOf(prefs.getString(key, default) ?: default)
+
+    private fun boolState(key: String, default: Boolean): MutableState<Boolean> =
+        mutableStateOf(prefs.getBoolean(key, default))
+
     // ---------- gorunum ----------
     /** "system" | "dark" | "light" — varsayilan koyu (masaustu Ayarlar ile ayni). */
+    private val themeState = stringState(KEY_THEME, "dark")
     var themeMode: String
-        get() = prefs.getString(KEY_THEME, "dark") ?: "dark"
-        set(v) = prefs.edit().putString(KEY_THEME, v).apply()
+        get() = themeState.value
+        set(v) {
+            themeState.value = v
+            prefs.edit().putString(KEY_THEME, v).apply()
+        }
 
     // ---------- cihaz ----------
     /** Bu cihazin goruntulenecek adi. */
+    private val deviceNameState = stringState(KEY_DEVICE_NAME, defaultDeviceName())
     var deviceName: String
-        get() = prefs.getString(KEY_DEVICE_NAME, defaultDeviceName()) ?: defaultDeviceName()
-        set(v) = prefs.edit().putString(KEY_DEVICE_NAME, v).apply()
+        get() = deviceNameState.value
+        set(v) {
+            deviceNameState.value = v
+            prefs.edit().putString(KEY_DEVICE_NAME, v).apply()
+        }
 
     // ---------- baglanti ----------
     // NOT: Masaustundaki "connMode / lanSignal / signalUrl / internetSignalUrl"
@@ -42,31 +63,56 @@ class SettingsStore(context: Context) {
     // Bu yuzden o alanlar burada tutulmaz (oluk kod).
 
     // ---------- TURN / MQTT ----------
+    private val preferRelayState = boolState(KEY_PREFER_RELAY, false)
     var preferRelay: Boolean
-        get() = prefs.getBoolean(KEY_PREFER_RELAY, false)
-        set(v) = prefs.edit().putBoolean(KEY_PREFER_RELAY, v).apply()
+        get() = preferRelayState.value
+        set(v) {
+            preferRelayState.value = v
+            prefs.edit().putBoolean(KEY_PREFER_RELAY, v).apply()
+        }
 
+    private val publicTurnState = boolState(KEY_PUBLIC_TURN, false)
     var publicTurnFallback: Boolean
-        get() = prefs.getBoolean(KEY_PUBLIC_TURN, false)
-        set(v) = prefs.edit().putBoolean(KEY_PUBLIC_TURN, v).apply()
+        get() = publicTurnState.value
+        set(v) {
+            publicTurnState.value = v
+            prefs.edit().putBoolean(KEY_PUBLIC_TURN, v).apply()
+        }
 
+    private val mqttBrokerState = stringState(KEY_MQTT_BROKER, "")
     var mqttBroker: String
-        get() = prefs.getString(KEY_MQTT_BROKER, "") ?: ""
-        set(v) = prefs.edit().putString(KEY_MQTT_BROKER, v.trim()).apply()
+        get() = mqttBrokerState.value
+        set(v) {
+            mqttBrokerState.value = v
+            prefs.edit().putString(KEY_MQTT_BROKER, v.trim()).apply()
+        }
 
+    private val turnUrlState = stringState(KEY_TURN_URL, "")
     var turnUrl: String
-        get() = prefs.getString(KEY_TURN_URL, "") ?: ""
-        set(v) = prefs.edit().putString(KEY_TURN_URL, v.trim()).apply()
+        get() = turnUrlState.value
+        set(v) {
+            turnUrlState.value = v
+            prefs.edit().putString(KEY_TURN_URL, v.trim()).apply()
+        }
 
+    private val turnUserState = stringState(KEY_TURN_USER, "")
     var turnUser: String
-        get() = prefs.getString(KEY_TURN_USER, "") ?: ""
-        set(v) = prefs.edit().putString(KEY_TURN_USER, v.trim()).apply()
+        get() = turnUserState.value
+        set(v) {
+            turnUserState.value = v
+            prefs.edit().putString(KEY_TURN_USER, v.trim()).apply()
+        }
 
+    private val turnPassState = stringState(KEY_TURN_PASS, "")
     var turnPass: String
-        get() = prefs.getString(KEY_TURN_PASS, "") ?: ""
-        set(v) = prefs.edit().putString(KEY_TURN_PASS, v).apply()
+        get() = turnPassState.value
+        set(v) {
+            turnPassState.value = v
+            prefs.edit().putString(KEY_TURN_PASS, v).apply()
+        }
 
     // ---------- oturum hafizasi ----------
+    // Ekran disinda kaldigi icin plain prefs yeterli (state gerekmez).
     var lastRoom: String
         get() = prefs.getString(KEY_LAST_ROOM, "") ?: ""
         set(v) = prefs.edit().putString(KEY_LAST_ROOM, v).apply()

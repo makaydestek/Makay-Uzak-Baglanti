@@ -183,8 +183,8 @@ cihazını etkiler).
 
 | Alan | Değer |
 |---|---|
-| Eşleşme ağı | `makay/aio/v1/<ODA>` (MQTT / WSS) |
-| Brokerler | `broker.emqx.io:8084`, `broker.hivemq.com:8884`, `test.mosquitto.org:8081` |
+| Eşleşme ağı | `makay/aio/v1/<ODA>` (MQTT / WSS); davet metninde `Sinyal: <adres>` satiri **varsa** HTTP sinyal sunucusu (Cloudflare tüneli / LAN `api/join|poll|send`) kullanılır |
+| Brokerler | `broker.emqx.io:8084`, `test.mosquitto.org:8081` (MQTT-5; Windows köprüsü MQTT 3.1.1 ile `broker.hivemq.com`'u da dener — Android'de MQTT-5 CONNACK vermediği için listede yok) |
 | Zarf | `{v, pinHash, ts, from, t}` |
 | Doğrulama | `hello` mesajında `sha256(sifre)` |
 | Mesaj tipleri | `hello, text, sdp, ice, bye, ctrl-req/ok/deny/stop, ctrl, clip, mic, video-stop, file-meta, file-done, file-cancel, chunk` |

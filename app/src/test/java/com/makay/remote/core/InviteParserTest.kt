@@ -112,4 +112,46 @@ class InviteParserTest {
         assertEquals("01234567", p.code)
         assertEquals("500000", p.password)
     }
+
+    // ---------------- "Sinyal" satiri (HTTP tünel/LAN oda) ----------------
+
+    /** Windows `buildInviteShareText`: "Sinyal: https://…" satiri. */
+    @Test
+    fun parsesSinyalUrlFromFullInvite() {
+        val raw = "MAKAY Uzaktan Bağlantı\n" +
+            "Kimlik: 0DH8 H0C0\n" +
+            "Şifre: 123456\n" +
+            "Sinyal: https://abc-def.trycloudflare.com"
+        val p = InviteParser.parse(raw)
+        assertEquals("0DH8H0C0", p.code)
+        assertEquals("123456", p.password)
+        assertEquals("https://abc-def.trycloudflare.com", p.signalUrl)
+    }
+
+    /** Sunucu etiketi "Sinyal Sunucusu:" da yazilabilir (Windows regex'i ile ayni). */
+    @Test
+    fun parsesSinyalSunucusuLabelAndStripsTrailingSlash() {
+        val p = InviteParser.parse(
+            "Kimlik: 0DH8 H0C0\nŞifre: 123456\nSinyal Sunucusu: http://192.168.1.20:3000/"
+        )
+        assertEquals("http://192.168.1.20:3000", p.signalUrl)
+    }
+
+    /** Bulut davetinde Sinyal satiri yoktur → signalUrl bos kalir (MQTT kullanilir). */
+    @Test
+    fun cloudInviteHasEmptySignalUrl() {
+        val p = InviteParser.parse("MAKAY Uzaktan Bağlantı\nKimlik: 0DH8 H0C0\nŞifre: 123456")
+        assertEquals("0DH8H0C0", p.code)
+        assertEquals("123456", p.password)
+        assertEquals("", p.signalUrl)
+    }
+
+    /** URL satir sonunda kesilir; satir devamindaki (diger satirlar) dahil edilmez. */
+    @Test
+    fun signalUrlStopsAtLineEnd() {
+        val p = InviteParser.parse(
+            "Kimlik: 0DH8 H0C0\nŞifre: 123456\nSinyal: https://ornek.trycloudflare.com\nNot: burasi dahil degil"
+        )
+        assertEquals("https://ornek.trycloudflare.com", p.signalUrl)
+    }
 }

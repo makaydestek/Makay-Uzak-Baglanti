@@ -17,7 +17,9 @@ import com.makay.remote.rtc.ControlPayload
 import com.makay.remote.rtc.FileTransferEngine
 import com.makay.remote.rtc.PeerBridge
 import com.makay.remote.rtc.WireEnvelope
+import com.makay.remote.signal.HttpSignalClient
 import com.makay.remote.signal.MqttSignalClient
+import com.makay.remote.signal.SignalChannel
 import com.makay.remote.signal.SignalEnvelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,16 +48,24 @@ import java.io.File
  * Windows `electron/cloud-signal-bridge.js` ile AYNIDIR:
  *
  *   Oluşturan (OFFERER, ekranini paylasan):
- *     oda uret -> MQTT'ye abone ol -> davet metni goster
+ *     oda uret -> sinyal kanalina abone ol -> davet metni goster
  *     <- {t:'join-request', name}   (her 2 sn'de bir)
  *     kullanicinin onayi ile: peer.start() -> {t:'offer', code}
  *     -> {t:'answer', code} gelince acceptAnswer
  *
  *   Katilan (ANSWERER, teknisyen):
- *     kod+sifre -> MQTT'ye abone ol -> {t:'join-request', name} (2 sn'de bir)
+ *     kod+sifre -> sinyal kanalina abone ol -> {t:'join-request', name} (2 sn'de bir)
  *     <- {t:'offer', code} gelince peer.acceptOffer -> {t:'answer', code} gonder
  *
  *   Iki taraf da: {t:'ice', mid, mline, cand, ufrag} karsilidir.
+ *
+ *   Sinyal kanali (bkz. `signal/SignalChannel.kt`):
+ *     - Davet metninde "Sinyal: <adres>" SATIRI VARSA HTTP (Cloudflare
+ *       tüneli / LAN sinyal sunucusu) — [HttpSignalClient]; mobil aglarda
+ *       halka MQTT broker'larina erisilemese de calisir.
+ *     - YOKSA (yalnizca kimlik+sifre) bulut eslesme (MQTT) — [MqttSignalClient].
+ *     - Android'in KURDUGU odalar her zaman MQTT'dir (Android'de HTTP
+ *       sinyal sunucusu yoktur); masaustu taraf bulut koprusuyle katilir.
  *
  * NOT: Peer, offerer'da ONAY ANINDA yaratilir (masaustuyla ayni): erken
  * uretilen ICE adaylari NAT'ta bayatlar.
@@ -144,7 +154,7 @@ class SessionController(
     private val gson = WireJson.gson
     private val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob())
 
-    private var mqtt: MqttSignalClient? = null
+    private var signal: SignalChannel? = null
     private var peer: PeerBridge? = null
     private var joinRetryJob: Job? = null
     private var connectTimeoutJob: Job? = null
@@ -162,7 +172,7 @@ class SessionController(
 
     /** Yeni oda acar ve davet metnini dondurur. */
     suspend fun host(): String {
-        reset(keepMqtt = false)
+        reset(keepSignal = false)
         val pwd = Primitives.generateSessionPassword()
         val code = Primitives.generateRoom()
         asHost = true
@@ -172,17 +182,20 @@ class SessionController(
         val invite = Primitives.buildInviteText(code, pwd)
         _state.value = State.Hosting(code, pwd, invite)
 
+        /* Android oda KURUCU olarak her zaman bulut (MQTT) kullanir —
+           Android'de HTTP sinyal sunucusu YOKTUR; masaustu misafirler
+           bulut koprusu (cloud-signal-bridge) ile bu odaya katilir. */
         val client = MqttSignalClient(settings.mqttBroker.ifEmpty { null })
-        mqtt = client
+        signal = client
         try {
             client.subscribe(
                 code, pwd,
-                MqttSignalClient.Listener { onSignal(it) },
-                MqttSignalClient.CloseListener { onMqttClosed() }
+                SignalChannel.Listener { onSignal(it) },
+                SignalChannel.CloseListener { onSignalClosed() }
             )
         } catch (e: Exception) {
             Log.w(TAG, "Eslesme agina ulasilamadi: ${e.message}")
-            reset(keepMqtt = false)
+            reset(keepSignal = false)
             _state.value = State.Failed("Eşleşme ağına ulaşılamadı — internet bağlantınızı kontrol edin")
             return ""
         }
@@ -208,7 +221,7 @@ class SessionController(
         scope.launch(Dispatchers.Default) {
             try {
                 val offerCode = p.start()
-                mqtt?.publish(SignalEnvelope(type = SignalEnvelope.TYPE_OFFER, code = offerCode))
+                signal?.publish(SignalEnvelope(type = SignalEnvelope.TYPE_OFFER, code = offerCode))
             } catch (e: Exception) {
                 Log.w(TAG, "Offer gonderilemedi: ${e.message}")
                 _state.value = State.Failed("Bağlantı teklifi oluşturulamadı: ${e.message}")
@@ -222,7 +235,7 @@ class SessionController(
         val hosting = _state.value as? State.Hosting
         _state.value = State.AwaitingApproval("")
         scope.launch {
-            runCatching { mqtt?.publish(SignalEnvelope(type = SignalEnvelope.TYPE_JOIN_DENIED)) }
+            runCatching { signal?.publish(SignalEnvelope(type = SignalEnvelope.TYPE_JOIN_DENIED)) }
             if (hosting != null) {
                 _state.value = hosting
             } else {
@@ -238,7 +251,7 @@ class SessionController(
      * Metin birebir Windows `parseInvitePaste` kurallariyla cozulur.
      */
     suspend fun join(inviteText: String, passwordInput: String) {
-        reset(keepMqtt = false)
+        reset(keepSignal = false)
         val parsed = parseInvite(inviteText)
         val code = parsed.code
         val pwd = parsed.password.ifEmpty { passwordInput.trim() }
@@ -257,19 +270,48 @@ class SessionController(
         password = pwd
         _state.value = State.Joining(code, pwd)
 
-        val client = MqttSignalClient(settings.mqttBroker.ifEmpty { null })
-        mqtt = client
-        try {
-            client.subscribe(
-                code, pwd,
-                MqttSignalClient.Listener { onSignal(it) },
-                MqttSignalClient.CloseListener { onMqttClosed() }
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "Eslesme agina ulasilamadi: ${e.message}")
-            reset(keepMqtt = false)
-            _state.value = State.Failed("Eşleşme ağına ulaşılamadı — internet bağlantınızı kontrol edin")
-            return
+        /* Tansiyon secimi:
+           1) Davet metninde "Sinyal: <adres>" satiri VARSA HTTP (Cloudflare
+              tüneli / LAN) ile katil — telefonun halka acik MQTT broker'larina
+              erisemedigi mobil aglarda da calisir.
+           2) Adres YOKSA (yalnizca kimlik+sifre girildiginde) ya da HTTP
+              basarisizsa (olmus tünel,404…) bulut eslesme (MQTT) kullanilir —
+              masaustunun HTTP odasina acigi yedek kopru dahil iki yontem de
+              ayni odayi dinler. */
+        var joined = false
+        val signalUrl = parsed.signalUrl
+        if (signalUrl.isNotEmpty()) {
+            val http = HttpSignalClient(signalUrl) { m -> Log.i(TAG, m) }
+            try {
+                http.subscribe(
+                    code, pwd,
+                    SignalChannel.Listener { onSignal(it) },
+                    SignalChannel.CloseListener { onSignalClosed() }
+                )
+                signal = http
+                joined = true
+                Log.i(TAG, "HTTP sinyal adresiyle katildi: $signalUrl")
+            } catch (e: Exception) {
+                Log.w(TAG, "HTTP sinyal adresine basilamadi ($signalUrl): ${e.message} — MQTT'ye donuluyor")
+                runCatching { http.close() }
+            }
+        }
+
+        if (!joined) {
+            val client = MqttSignalClient(settings.mqttBroker.ifEmpty { null })
+            try {
+                client.subscribe(
+                    code, pwd,
+                    SignalChannel.Listener { onSignal(it) },
+                    SignalChannel.CloseListener { onSignalClosed() }
+                )
+                signal = client
+            } catch (e: Exception) {
+                Log.w(TAG, "Eslesme agina ulasilamadi: ${e.message}")
+                reset(keepSignal = false)
+                _state.value = State.Failed("Eşleşme ağına ulaşılamadı — internet bağlantınızı kontrol edin")
+                return
+            }
         }
 
         settings.lastRoom = code
@@ -286,7 +328,7 @@ class SessionController(
                 if (st !is State.Joining) break
                 if (peer != null) break
                 runCatching {
-                    mqtt?.publish(
+                    signal?.publish(
                         SignalEnvelope(
                             type = SignalEnvelope.TYPE_JOIN_REQUEST,
                             name = settings.deviceName
@@ -317,7 +359,7 @@ class SessionController(
 
             SignalEnvelope.TYPE_JOIN_DENIED -> {
                 joinRetryJob?.cancel()
-                reset(keepMqtt = true)
+                reset(keepSignal = true)
                 emitToast("Bağlantı isteği reddedildi", "warning")
             }
 
@@ -335,7 +377,7 @@ class SessionController(
                 scope.launch(Dispatchers.Default) {
                     try {
                         val answerCode = p.acceptOffer(code)
-                        mqtt?.publish(SignalEnvelope(type = SignalEnvelope.TYPE_ANSWER, code = answerCode))
+                        signal?.publish(SignalEnvelope(type = SignalEnvelope.TYPE_ANSWER, code = answerCode))
                     } catch (e: Exception) {
                         Log.w(TAG, "Offer islenemedi: ${e.message}")
                         _state.value = State.Failed("Bağlantı teklifi işlenemedi: ${e.message}")
@@ -359,13 +401,13 @@ class SessionController(
 
             SignalEnvelope.TYPE_BYE -> {
                 val wasConnected = _state.value is State.Connected
-                reset(keepMqtt = true)
+                reset(keepSignal = true)
                 if (wasConnected) emitToast("Karşı taraf bağlantıyı kapattı", "warning")
             }
         }
     }
 
-    private fun onMqttClosed() {
+    private fun onSignalClosed() {
         if (intentionalClose) return
         val st = _state.value
         if (st is State.Idle || st is State.Failed) return
@@ -400,7 +442,7 @@ class SessionController(
         val w = runCatching { gson.fromJson(raw, WireEnvelope::class.java) }.getOrNull() ?: return
         if (w.type != WireEnvelope.ICE) return
         runCatching {
-            mqtt?.publish(
+            signal?.publish(
                 SignalEnvelope(
                     type = SignalEnvelope.TYPE_ICE,
                     mid = w.mid,
@@ -430,7 +472,7 @@ class SessionController(
     private val peerListener = object : PeerBridge.Listener {
         override fun onState(state: String) {
             if (state == "closed" && !intentionalClose) {
-                reset(keepMqtt = true)
+                reset(keepSignal = true)
             }
         }
 
@@ -511,7 +553,7 @@ class SessionController(
         }
 
         override fun onBye(reason: String) {
-            reset(keepMqtt = true)
+            reset(keepSignal = true)
             emitToast(if (reason.isEmpty()) "Bağlantı kapatıldı" else "Bağlantı kapatıldı: $reason", "warning")
         }
 
@@ -703,9 +745,9 @@ class SessionController(
         val hostingRoom = room
         scope.launch {
             if (asHost && hostingRoom.isNotEmpty()) {
-                runCatching { mqtt?.publish(SignalEnvelope(type = SignalEnvelope.TYPE_BYE)) }
+                runCatching { signal?.publish(SignalEnvelope(type = SignalEnvelope.TYPE_BYE)) }
             }
-            reset(keepMqtt = false)
+            reset(keepSignal = false)
             settings.clearSession()
             intentionalClose = false
         }
@@ -714,7 +756,7 @@ class SessionController(
     /** Hata ekranindan ana ekrana donerken cagrilir. */
     fun backToIdle() {
         intentionalClose = true
-        reset(keepMqtt = false)
+        reset(keepSignal = false)
         intentionalClose = false
         _state.value = State.Idle
     }
@@ -726,22 +768,22 @@ class SessionController(
         clearConnectTimeout()
         scope.launch {
             runCatching { peer?.close("shutdown") }
-            runCatching { mqtt?.close() }
+            runCatching { signal?.close() }
         }
     }
 
     // ---------------- yardimcilar ----------------
 
-    private fun reset(keepMqtt: Boolean) {
+    private fun reset(keepSignal: Boolean) {
         joinRetryJob?.cancel()
         joinRetryJob = null
         clearConnectTimeout()
         peer?.let { runCatching { it.close("reset") } }
         peer = null
         com.makay.remote.rtc.PeerRegistry.current = null
-        if (!keepMqtt) {
-            mqtt?.close()
-            mqtt = null
+        if (!keepSignal) {
+            signal?.close()
+            signal = null
             room = ""
             password = ""
             asHost = false
@@ -813,16 +855,18 @@ class SessionController(
 
     // ---------------- davet cozme ----------------
 
-    data class ParsedInvite(val code: String, val password: String)
+    data class ParsedInvite(val code: String, val password: String, val signalUrl: String)
 
     /**
      * Windows `parseInvitePaste` ile AYNI kurallar.
      *
      * Ayistirma mantigi saf `InviteParser` nesnesindedir (JVM test edilebilir);
      * bu metot yalnizca ayni donus tipini koruyarak onu cagirir.
+     * `signalUrl`: davet metninde "Sinyal: <adres>" satiri varsa o adres
+     * (HTTP tünel/LAN odaya oradan katilinir — bkz. join).
      */
     fun parseInvite(raw: String): ParsedInvite =
-        InviteParser.parse(raw).let { ParsedInvite(it.code, it.password) }
+        InviteParser.parse(raw).let { ParsedInvite(it.code, it.password, it.signalUrl) }
 
     companion object {
         private const val TAG = "MakaySession"
