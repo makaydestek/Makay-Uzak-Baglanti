@@ -121,11 +121,27 @@ class PeerBridge(
     @Volatile var lastDiag: String = ""
         private set
 
+    /**
+     * HELLO el sikismasi durumu.
+     *
+     * Baglanti "Baglaniyor" ekraninda takildiginda bunlar gorulur: ICE ve
+     * veri kanali bile acik olabilir, ancak HELLO el sikismasi tamamlanmadiysa
+     * karsi tarafta `onReady` hic calismaz ve oturum hic "Bagli" durumuna gecmez.
+     */
+    @Volatile var helloSent: Boolean = false
+        private set
+    @Volatile var helloReceived: Boolean = false
+        private set
+
     /** Baglanti ekranda gosterilen tek satirlik tani ozeti. */
     fun diagText(): String =
         "ICE=$iceState · bağlantı=$connState · kanal=$channelState · " +
             "yerel aday=$localCandidateCount · uzak aday=$remoteCandidateCount" +
             (if (pendingRemoteCount > 0) " (bekleyen $pendingRemoteCount)" else "") +
+            " · hello " +
+            (if (helloSent) "gönderildi" else "GÖNDERİLMEDİ") +
+            " / " +
+            (if (helloReceived) "karşı geldi" else "karşı HELLO YOK") +
             (if (lastDiag.isNotEmpty()) " · $lastDiag" else "")
 
     private val eglBase: EglBase by lazy { EglBase.create() }
@@ -390,7 +406,7 @@ class PeerBridge(
             override fun onStateChange() {
                 channelState = ch.state()?.name?.lowercase() ?: "unknown"
                 when (ch.state()) {
-                    DataChannel.State.OPEN -> sendHello()
+                    DataChannel.State.OPEN -> maybeSendHello(ch)
                     DataChannel.State.CLOSED -> if (!closed) {
                         closed = true
                         listener?.onState("closed")
@@ -414,6 +430,26 @@ class PeerBridge(
                 }
             }
         })
+        /*
+         * KRITIK: katilan (answerer) tarafta kanal, karsinin olusturdugu
+         * `onDataChannel` uzerinden gelir ve bu sirada kanal ZATEN acik olabilir.
+         * libwebrtc boyle bir kanal icin `onStateChange(OPEN)` olayini geriye
+         * donuk CAGRILMAZ. Eski surumde HELLO yalnizca bu olaydan
+         * gonderildigi icin hic gonderilmiyor, karsi taraf (masaustu) da
+         * beklemeye geciyor ve oturum ICE/kanal acik olmasina ragmen hic
+         * "Bagli" durumuna hic gecmiyordu.
+         *
+         * Bu yuzden kayittan hemen sonra durum elle kontrol edilir.
+         */
+        maybeSendHello(ch)
+    }
+
+    /** Kanal aciksa HELLO'yu AYNI KEZ gonderir (cift gonderimi engeller). */
+    private fun maybeSendHello(ch: DataChannel) {
+        if (closed || helloSent) return
+        if (ch.state() != DataChannel.State.OPEN) return
+        helloSent = true
+        sendHello()
     }
 
     private fun sendHello() {
@@ -429,13 +465,19 @@ class PeerBridge(
         when (env.type) {
             WireEnvelope.HELLO -> {
                 if (env.sid != sessionId) {
+                    /* Bildirim kisa surede kayboluyor; tani satirina da yazilir
+                       ki tek bir ekran goruntusu neden baglanilmadigini soylesin. */
+                    lastDiag = "HELLO sid uyuşmadı (beklenen=$sessionId gelen=${env.sid})"
                     listener?.onError("Oturum kimliği uyuşmuyor")
                     close(); return
                 }
-                if (env.hash != Primitives.sha256Hex(password)) {
+                val localHash = Primitives.sha256Hex(password)
+                if (env.hash != localHash) {
+                    lastDiag = "HELLO şifre uyuşmadı (beklenen=${localHash.take(12)}… gelen=${env.hash?.take(12) ?: "boş"}…)"
                     listener?.onError("Oturum şifresi uyuşmuyor")
                     close(); return
                 }
+                helloReceived = true
                 peerName = env.name.orEmpty().ifEmpty { "Karşı taraf" }
                 peerReady = true
                 listener?.onReady(peerName)
