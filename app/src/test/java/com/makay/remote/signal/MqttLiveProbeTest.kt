@@ -62,4 +62,42 @@ class MqttLiveProbeTest {
         println("PROBE sonuc: alindi=${got.get()} (bekleme=${waited}ms)")
         assertTrue("Broker round-trip basarisiz", got.get())
     }
+
+    /**
+     * CANLI UCTAN UCA: GERCEK bir Windows host odasina (MAKAY_ROOM/MAKAY_PWD)
+     * Android istemcisiyle (MqttSignalClient) katilir; periyodik join-request
+     * yayinlar ve offer gelip gelmedigini olcer. Amac: "telefon mu baglanamiyor,
+     * Android istemcisi mi Windows'a ulasamiyor?" sorusunu kesinlestirmek.
+     *
+     *   $env:MAKAY_ROOM="P6VT29QA"; $env:MAKAY_PWD="919316"; \
+     *   .\gradlew.bat :app:testDebugUnitTest --tests "*MqttLiveProbeTest*"
+     */
+    @Test
+    fun joinLiveHost() = runBlocking {
+        val room = System.getenv("MAKAY_ROOM")
+        val pwd = System.getenv("MAKAY_PWD")
+        org.junit.Assume.assumeTrue(
+            "joinLiveHost atlandi (MAKAY_ROOM + MAKAY_PWD gerekli)",
+            !room.isNullOrBlank() && !pwd.isNullOrBlank()
+        )
+        println("LIVEJOIN room=$room pwd=$pwd pin=${com.makay.remote.core.Primitives.sha256Hex(pwd!!)}")
+
+        val gotOffer = AtomicBoolean(false)
+        val client = MqttSignalClient(null)
+        client.subscribe(room!!, pwd, SignalChannel.Listener { env ->
+            println("LIVEJOIN GOT: type=${env.type} from=${env.from} code=${env.code?.take(40)}")
+            if (env.type == SignalEnvelope.TYPE_OFFER) gotOffer.set(true)
+        }, null)
+        println("LIVEJOIN abone olundu; join-request gonderiliyor")
+
+        val end = System.currentTimeMillis() + 45000
+        while (System.currentTimeMillis() < end) {
+            runCatching {
+                client.publish(SignalEnvelope(type = SignalEnvelope.TYPE_JOIN_REQUEST, name = "AndroidLiveTest"))
+            }.onFailure { println("LIVEJOIN PUB HATA: ${it.message}") }
+            delay(2000)
+        }
+        client.close()
+        println("LIVEJOIN sonuc: offer=${gotOffer.get()}")
+    }
 }

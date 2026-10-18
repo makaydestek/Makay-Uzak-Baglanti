@@ -4,6 +4,9 @@ import android.util.Log
 import com.google.gson.Gson
 import com.makay.remote.core.Primitives
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -75,41 +78,53 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
         this.pinHash = Primitives.sha256Hex(password)
         this.topic = topicFor(room)
 
-        var lastError: Exception? = null
-        var connected: MqttAsyncClient? = null
-
-        for (broker in buildBrokerList(customBroker)) {
-            if (closed.get()) break
-            val c = try {
-                connectOne(broker)
-            } catch (e: Exception) {
-                Log.w(TAG, "Broker erisilemedi: $broker (${e.message})")
-                lastError = e
-                null
-            }
-            if (c != null) {
-                /* Baglanti kuruldu; SIMDI konuya abone ol. Abonelik de
-                   basarisiz olabilir (bkz. subscribeTopic'teki Paho 1.2.5
-                   hatasi) — o durumda broker'i kapatip SIRADAKINE gecilir;
-                   aksi halde "baglandi ama mesaj hic gelmiyor" durumu olusur. */
-                try {
-                    subscribeTopic(c)
-                    connected = c
-                    break
-                } catch (e: Exception) {
-                    Log.w(TAG, "Abone olunamadi ($broker): ${e.message}")
-                    lastError = e
-                    runCatching { c.disconnectForcibly(200L, 200L, false) }
-                    runCatching { c.close() }
+        /* FAN-OUT (masaustu köprüsüyle ayni strateji): ULASTIGIMIZ TUM
+           broker'lara baglanip hepsine yayin yapariz.
+           Neden: Windows köprüsü (cloud-signal-bridge) emqx+hivemq+mosquitto
+           ucunun TUMUNE baglanir; Android ise eskiden YALNIZCA ilk basarili
+           broker'a baglaniyordu. Iki taraf FARKLI broker'lara dustugunde
+           (or. masaustunun kurumsal agdan emqx'e erisemeyip mosquitto'ya
+           duserken telefonun emqx'i secmesi) join-request karsi tarafa HIC
+           ulasmiyordu — "Windows'ta onay istegi gorunmuyor" belirtisinin
+           en olasi nedeni budur. Artik ortak EN AZ BIR broker'da bulusmak
+           garanti altina alinir.
+           Ayni mesaj birden fazla broker'dan gelse de handleRaw'daki
+           (from|ts|type) tekilleştirmesi mukeerrerleri eler; publish de
+           bagli TUM broker'lara yazar. */
+        val errors = java.util.Collections.synchronizedList(mutableListOf<Exception>())
+        val results = coroutineScope {
+            buildBrokerList(customBroker).map { broker ->
+                async(Dispatchers.IO) {
+                    if (closed.get()) return@async null
+                    try {
+                        val c = connectOne(broker)
+                        try {
+                            subscribeTopic(c)
+                            c
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Abone olunamadi ($broker): ${e.message}")
+                            errors.add(e)
+                            runCatching { c.disconnectForcibly(200L, 200L, false) }
+                            runCatching { c.close() }
+                            null
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Broker erisilemedi: $broker (${e.message})")
+                        errors.add(e)
+                        null
+                    }
                 }
-            }
+            }.awaitAll()
         }
 
-        if (connected == null) {
-            Log.w(TAG, "Eslesme agina ulasilamadi: ${lastError?.message}")
-            throw lastError ?: MqttException(MqttException.REASON_CODE_CLIENT_EXCEPTION.toInt())
+        val ok = results.filterNotNull()
+        if (ok.isEmpty()) {
+            Log.w(TAG, "Eslesme agina ulasilamadi (hicbir broker yanit vermedi)")
+            throw errors.firstOrNull()
+                ?: MqttException(MqttException.REASON_CODE_CLIENT_EXCEPTION.toInt())
         }
-        clients += connected
+        Log.i(TAG, "Eslestirme: ${ok.size} broker'a baglandi")
+        clients += ok
     }
 
     private fun subscribeTopic(client: MqttAsyncClient) {
