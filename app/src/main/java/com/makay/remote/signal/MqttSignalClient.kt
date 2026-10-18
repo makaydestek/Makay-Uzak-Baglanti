@@ -88,8 +88,20 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
                 null
             }
             if (c != null) {
-                connected = c
-                break
+                /* Baglanti kuruldu; SIMDI konuya abone ol. Abonelik de
+                   basarisiz olabilir (bkz. subscribeTopic'teki Paho 1.2.5
+                   hatasi) — o durumda broker'i kapatip SIRADAKINE gecilir;
+                   aksi halde "baglandi ama mesaj hic gelmiyor" durumu olusur. */
+                try {
+                    subscribeTopic(c)
+                    connected = c
+                    break
+                } catch (e: Exception) {
+                    Log.w(TAG, "Abone olunamadi ($broker): ${e.message}")
+                    lastError = e
+                    runCatching { c.disconnectForcibly(200L, 200L, false) }
+                    runCatching { c.close() }
+                }
             }
         }
 
@@ -98,23 +110,49 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
             throw lastError ?: MqttException(MqttException.REASON_CODE_CLIENT_EXCEPTION.toInt())
         }
         clients += connected
-        subscribeTopic(connected)
     }
 
     private fun subscribeTopic(client: MqttAsyncClient) {
         val t = topic ?: return
         if (!client.isConnected) return
         try {
-            client.subscribe(MqttSubscription(t, QOS), null, null, messageListener, MqttProperties())
+            /* KRITIK (Paho 1.2.5 hatasi): `subscribe(MqttSubscription, Object,
+               MqttActionListener, IMqttMessageListener, MqttProperties)` asiri
+               yuklemesi BOZUKTUR — iceride kosulsuz olarak
+               `subscriptionProperties.getSubscriptionIdentifiers().get(0)`
+               cagirir; varsayilan (bos) MqttProperties'te bu liste BOS oldugu
+               icin `IndexOutOfBoundsException` firlatir. Bu hata MqttException
+               OLMADIGI icin eski `catch (e: MqttException)` tarafindan
+               yakalanmaz, yukari sizar ve kullaniciya yaniltici bicimde
+               "Eslesme agina ulasilamadi — internet baglantinizi kontrol edin"
+               olarak gosterilirdi (yani aslinda AG degil KOD hatasi).
+               Bu yuzden DIZI tabanli asiri yukleme kullanilir: get(0) cagirmaz
+               ve mesaj dinleyicisini konuya baglar. */
+            client.subscribe(
+                arrayOf(MqttSubscription(t, QOS)),
+                null,
+                null,
+                arrayOf<IMqttMessageListener>(messageListener),
+                MqttProperties()
+            )
             Log.i(TAG, "Abone olundu: $t")
-        } catch (e: MqttException) {
+        } catch (e: Exception) {
             Log.w(TAG, "Abone hatasi: ${e.message}")
+            throw MqttException(MqttException.REASON_CODE_CLIENT_EXCEPTION.toInt()).apply { initCause(e) }
         }
     }
 
     private suspend fun connectOne(url: String): MqttAsyncClient = withContext(Dispatchers.IO) {
         val clientId = "makay-" + java.util.UUID.randomUUID().toString().take(12)
-        val client = MqttAsyncClient(url, clientId)
+        /* 3. parametre BILEREK null (MqttClientPersistence) — Paho bu durumda
+           bellek kaliciligi (MemoryPersistence) kullanir. 2 parametreli yapici
+           MqttDefaultFilePersistence kullanir ve `user.dir` altinda
+           `makay-<clientId>/` klasoru acmaya calisir. Android'de `user.dir`
+           cogunlukla `/` (yazilamaz) oldugu icin bu yapici
+           MqttPersistenceException firlatabilir ve istemci hic kurulamaz
+           ("Eslesme agina ulasilamadi" ile ayni yaniltici hata). Ayrica
+           cleanStart(true) kullandigimiz icin diske yazmak gereksizdir. */
+        val client = MqttAsyncClient(url, clientId, null)
 
         val options: MqttConnectionOptions = MqttConnectionOptionsBuilder()
             .serverURI(url)
@@ -132,7 +170,10 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
         client.setCallback(object : MqttCallback {
             override fun connectComplete(reconnect: Boolean, serverURI: String?) {
                 Log.i(TAG, "Broker baglandi: $serverURI (reconnect=$reconnect)")
-                subscribeTopic(client)
+                /* Yeniden baglanmada aboneligi tazele; hata callback is parcigini
+                   oldurmesin. */
+                runCatching { subscribeTopic(client) }
+                    .onFailure { Log.w(TAG, "Yeniden abone olamadi: ${it.message}") }
             }
 
             override fun disconnected(response: MqttDisconnectResponse?) {

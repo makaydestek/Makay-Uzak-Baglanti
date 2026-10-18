@@ -107,6 +107,10 @@ android {
         abortOnError = false
     }
 
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     packaging {
         resources {
             excludes += setOf(

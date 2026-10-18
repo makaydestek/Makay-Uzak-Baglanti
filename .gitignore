@@ -29,3 +29,6 @@ APK/*-mapping.txt
 # Keystores - never commit
 *.jks
 *.keystore
+
+# Paho MQTT varsayilan dosya kaliciligi (eski surumlerde olusabiliyordu)
+makay-*/
