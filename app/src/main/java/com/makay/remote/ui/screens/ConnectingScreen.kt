@@ -46,17 +46,28 @@ fun ConnectingScreen(
             textAlign = TextAlign.Center
         )
 
-        // Baglanti takildiginda hangi adimda kaldigini gosteren tani satiri.
-        // Destek icin bu satirin ekran goruntusu yeterlidir.
+        // Baglanti takildiginda hangi adimda kaldigini gosteren tani.
+        // Destek icin ekran goruntusu yeterlidir; hello satiri ayri tutulur.
         if (diagnostics.isNotBlank()) {
             Spacer(Modifier.height(18.dp))
+            val parts = diagnostics.split(" · hello ", limit = 2)
             Text(
-                text = diagnostics,
+                text = parts[0],
                 style = MaterialTheme.typography.bodySmall,
                 color = c.muted,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
+            if (parts.size > 1) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "hello " + parts[1],
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.accent2,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
 
         Spacer(Modifier.height(28.dp))

@@ -11,7 +11,9 @@ REM   3) Release APK derle  -> APK\MakayRemote_vX.Y.Z.apk + .sha256
 REM      (+ APK\MakayRemote_vX.Y.Z-mapping.txt  R8 obfuscation haritasi)
 REM   4) Surum degisikligini commit et + depoya it (push)
 REM   5) GitHub Release olustur + APK/SHA/mapping yukle (3 asset)
-REM   6) Eski release'leri sil (yalnizca yeni surum kalir)
+REM      Baslik/not: "MakayRemote vX.Y.Z" / "Yayin: MakayRemote vX.Y.Z"
+REM      (changelog yazilmaz — MakayCleaner / Video Player ile ayni sade bicim)
+REM   6) Eski release+tag sil (yalnizca yeni surum kalir)
 REM
 REM  TEK APK NE ISE YARAR:
 REM   MakayRemote_vX.Y.Z.apk - Play Protect engellemez, ayni Makay
@@ -292,6 +294,12 @@ if errorlevel 1 (
 
 set "TAG=!VERSION!"
 set "MAP=%APK_DIR%\MakayRemote_v!VERSION!-mapping.txt"
+REM Standart yayin metni (MakayCleaner / Makay Video Player ile ayni sade bicim).
+REM Changelog / "neler degisti" yazilmaz — yalnizca uygulama adi + surum.
+set "REL_TITLE=MakayRemote v!VERSION!"
+set "REL_NOTES=Yayin: MakayRemote v!VERSION!"
+set "NOTES_FILE=%TEMP%\makay-remote-release-notes.txt"
+> "!NOTES_FILE!" echo !REL_NOTES!
 
 REM Var olan tum assetleri topla: APK + SHA-256 + R8 haritasi.
 set "ASSETS="
@@ -302,58 +310,57 @@ if exist "!MAP!"        set ASSETS=!ASSETS! "!MAP!"
 gh release view "!TAG!" --repo %REPO% >nul 2>&1
 if errorlevel 1 (
     echo  Yeni release olusturuluyor...
-    set "NOTES_FILE=%TEMP%\makay-remote-release-notes.txt"
-    type nul > "!NOTES_FILE!"
-    gh release create "!TAG!" !ASSETS! --repo %REPO% --title "!VERSION!" --notes-file "!NOTES_FILE!"
+    REM --notes-file: kisa standart metin. --generate-notes KULLANILMAZ.
+    gh release create "!TAG!" !ASSETS! --repo %REPO% --title "!REL_TITLE!" --notes-file "!NOTES_FILE!"
     set "REL_ERR=!ERRORLEVEL!"
-    del /q "!NOTES_FILE!" >nul 2>&1
 ) else (
-    echo  Release !TAG! mevcut - assetler guncelleniyor...
+    echo  Release !TAG! mevcut - baslik/not + assetler guncelleniyor...
+    gh release edit "!TAG!" --repo %REPO% --title "!REL_TITLE!" --notes-file "!NOTES_FILE!" >nul 2>&1
     gh release upload "!TAG!" !ASSETS! --repo %REPO% --clobber
     set "REL_ERR=!ERRORLEVEL!"
 )
+del /q "!NOTES_FILE!" >nul 2>&1
 if not "!REL_ERR!"=="0" (
     echo [HATA] Release basarisiz. "gh auth status" ve yetkileri kontrol edin.
     goto :END_FAIL
 )
 echo  [OK] https://github.com/%REPO%/releases/tag/!TAG!
+echo  [OK] Baslik: !REL_TITLE!
+echo  [OK] Not   : !REL_NOTES!
 echo.
 
 echo Eski GitHub surumleri siliniyor (yalnizca !TAG! kalir)...
 set "TAGS_FILE=%TEMP%\makay-remote-tags.txt"
 set "ALL_TAGS=%TEMP%\makay-all-tags.txt"
 
-REM Once tum tag adlarini topla; sonra gereksiz release'leri sil;
-REM en sonda release'siz kalan tag'leri temizle (etiket birikimini onle).
-gh api "repos/%REPO%/tags" --paginate --jq ".[].name" > "!ALL_TAGS!" 2>nul
-
-gh release list --repo %REPO% --json tagName -q ".[].tagName" > "!TAGS_FILE!" 2>nul
+REM Tum release tag'leri (limit yuksek — eski surumler birikmesin).
+gh release list --repo %REPO% --limit 100 --json tagName -q ".[].tagName" > "!TAGS_FILE!" 2>nul
 if exist "!TAGS_FILE!" (
     for /f "usebackq delims=" %%T in ("!TAGS_FILE!") do (
         if /i not "%%T"=="!TAG!" (
-            gh release delete "%%T" --repo %REPO% --yes --cleanup-tag >nul 2>&1
+            echo  - release siliniyor: %%T
+            gh release delete "%%T" --repo %REPO% --yes --cleanup-tag
             if errorlevel 1 (
                 echo  [UYARI] release silinemedi: %%T
-            ) else (
-                echo  - release silindi: %%T
             )
         )
     )
     del /q "!TAGS_FILE!" >nul 2>&1
 )
 
-REM Release'siz kalan tag'ler artik yalnizca bunlar olabilir.
+REM Release'siz kalan / eski tag'leri de temizle.
+gh api "repos/%REPO%/tags" --paginate --jq ".[].name" > "!ALL_TAGS!" 2>nul
 if exist "!ALL_TAGS!" (
     for /f "usebackq delims=" %%T in ("!ALL_TAGS!") do (
         if /i not "%%T"=="!TAG!" (
+            echo  - tag siliniyor: %%T
             gh api -X DELETE "repos/%REPO%/git/refs/tags/%%T" >nul 2>&1
             if errorlevel 1 (
                 echo  [UYARI] tag silinemedi: %%T
-            ) else (
-                echo  - tag silindi: %%T
             )
         )
     )
+    del /q "!ALL_TAGS!" >nul 2>&1
 )
 echo.
 

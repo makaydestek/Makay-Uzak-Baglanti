@@ -397,13 +397,16 @@ class SessionController(
                 startConnectTimeout()
 
                 val p = createPeer(PeerBridge.Role.ANSWERER)
-                /* Tekliften ONCE gelen uzak adaylari simdi PeerBridge'e ver;
-                   PeerBridge onlari remoteDescription gelene dek tamponlar ve
-                   acceptOffer'da flushRemoteIces() uygular. */
+                /* Tekliften ONCE gelen uzak adaylari PeerBridge tamponuna ver
+                   (pc henuz yokken de saklanir). acceptOffer setRemoteSdp
+                   sonrasinda flushRemoteIces() uygular. */
                 flushPendingIce(p)
                 scope.launch(Dispatchers.Default) {
                     try {
                         val answerCode = p.acceptOffer(code)
+                        /* acceptOffer sirasinda gelen ek ICE'ler IceInbox'ta
+                           kalmis olabilir — peer artik var, hemen uygula. */
+                        flushPendingIce(p)
                         signal?.publish(SignalEnvelope(type = SignalEnvelope.TYPE_ANSWER, code = answerCode))
                     } catch (e: Exception) {
                         Log.w(TAG, "Offer islenemedi: ${e.message}")

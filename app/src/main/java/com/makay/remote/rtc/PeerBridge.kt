@@ -363,13 +363,16 @@ class PeerBridge(
 
     fun addRemoteCandidate(mid: String?, mline: Int?, cand: String?) {
         if (cand.isNullOrEmpty()) return
-        val p = pc ?: return
         // org.webrtc.IceCandidate yapicisi (sdpMid, sdpMLineIndex, sdp) sirasindadir.
         // Daha once argumanlar ters verildigi icin `sdp` alani "0" gibi gecersiz bir
         // deger aliyor ve addIceCandidate adayi sessizce reddediyordu; sonuc olarak
         // hicbir uzak ICE adayi uygulanamiyor ve baglanti (ICE) hic kurulamiyordu.
         val ice = IceCandidate(mid ?: "", mline ?: 0, cand)
-        if (p.remoteDescription == null) {
+        val p = pc
+        /* PeerConnection henuz yoksa (IceInbox flush, createPeer hemen sonrasi)
+           adaylari tamponla — eski kod `pc ?: return` ile bunlari DUSURUYORDU
+           ve `uzak aday=0` ile tekliften onceki trickle tamamen kayboluyordu. */
+        if (p == null || p.remoteDescription == null) {
             synchronized(pendingRemoteIces) {
                 if (pendingRemoteIces.size < 200) pendingRemoteIces.add(ice)
                 pendingRemoteCount = pendingRemoteIces.size
@@ -420,13 +423,17 @@ class PeerBridge(
                 val data = buffer.data
                 val bytes = ByteArray(data.remaining())
                 data.get(bytes)
+                /*
+                 * KRITIK (Android ↔ Electron): bazi yiginlar metin zarflarini
+                 * (hello/sdp/ctrl…) binary kare olarak iletir. Eski kod
+                 * `buffer.binary == true` ise dogrudan dosya parcasi sayiyordu;
+                 * HELLO sessizce kayboluyor, ICE/kanal acik kalmasına ragmen
+                 * oturum hic "Bagli" olmuyordu. Once JSON zarf dene; degilse
+                 * dosya parcasi olarak isle.
+                 */
+                if (tryHandleWireBytes(bytes)) return
                 if (buffer.binary) {
                     files.onBinaryChunk(bytes)
-                } else {
-                    val env = runCatching {
-                        gson.fromJson(String(bytes, Charsets.UTF_8), WireEnvelope::class.java)
-                    }.getOrNull()
-                    if (env != null) onEnvelope(env)
                 }
             }
         })
@@ -566,12 +573,25 @@ class PeerBridge(
 
     // ---------------- gonderim ----------------
 
+    /** Gelen baytlari WireEnvelope olarak yorumlar; degilse false. */
+    private fun tryHandleWireBytes(bytes: ByteArray): Boolean {
+        val env = WireMessageCodec.tryParseEnvelope(bytes) ?: return false
+        onEnvelope(env)
+        return true
+    }
+
     private fun send(env: WireEnvelope): Boolean {
         val ch = channel ?: return false
         if (ch.state() != DataChannel.State.OPEN) return false
         return try {
-            ch.send(DataChannel.Buffer(ByteBuffer.wrap(gson.toJson(env).toByteArray(Charsets.UTF_8)), false))
-            true
+            val ok = ch.send(
+                DataChannel.Buffer(ByteBuffer.wrap(gson.toJson(env).toByteArray(Charsets.UTF_8)), false)
+            )
+            if (!ok) {
+                lastDiag = "DataChannel.send false (t=${env.type})"
+                Log.w(TAG, lastDiag)
+            }
+            ok
         } catch (e: Exception) {
             Log.w(TAG, "Gonderim hatasi: ${e.message}")
             false
