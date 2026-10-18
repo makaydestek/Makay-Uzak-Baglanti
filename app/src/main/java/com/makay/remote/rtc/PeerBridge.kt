@@ -449,11 +449,18 @@ class PeerBridge(
         if (closed || helloSent) return
         if (ch.state() != DataChannel.State.OPEN) return
         helloSent = true
-        sendHello()
+        /* `send()` basarisiz donerse (kanal durumu degisti / gonderim hatasi)
+           HELLO hic gitmis OLMAZ; karsi taraf sonsuza kadar bekler. Bu yuzden
+           basarisizlik tanitima yazilir ve kanal yeniden acildiginda tekrar denenir. */
+        if (!sendHello()) {
+            helloSent = false
+            lastDiag = "HELLO gönderilemedi (kanal=${ch.state()})"
+        }
     }
 
-    private fun sendHello() {
-        send(WireEnvelope(
+    /** Veri kanalina HELLO gonderir; gercek gonderim sonucunu dondurur. */
+    private fun sendHello(): Boolean {
+        return send(WireEnvelope(
             type = WireEnvelope.HELLO,
             sid = sessionId,
             name = deviceName,
