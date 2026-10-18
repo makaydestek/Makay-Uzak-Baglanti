@@ -15,15 +15,15 @@ object IceConfig {
         "stun:stun.cloudflare.com:3478"
     )
 
-    /** Yedek acik TURN — bilincli olarak `includeDefaultTurn` ile eklenir. */
-    private val DEFAULT_TURN_URLS = listOf(
-        "turn:openrelay.metered.ca:80",
-        "turn:openrelay.metered.ca:443",
-        "turn:openrelay.metered.ca:443?transport=tcp",
-        "turns:openrelay.metered.ca:443?transport=tcp"
-    )
-    private const val DEFAULT_TURN_USER = "openrelayproject"
-    private const val DEFAULT_TURN_PASS = "openrelayproject"
+    /**
+     * Yedek acik TURN. NOT: Eski varsayilan `openrelay.metered.ca` (Open Relay)
+     * 2026'da kapandi ve artik kara delik bir adrese (192.0.2.1) cozuldugu icin
+     * baglanti hic kurulamiyordu. Artik kullanici Ayarlar'dan kendi TURN
+     * sunucusunu girmelidir; burada varsayilan TURN tanimlanmaz.
+     */
+    private val DEFAULT_TURN_URLS: List<String> = emptyList()
+    private const val DEFAULT_TURN_USER = ""
+    private const val DEFAULT_TURN_PASS = ""
 
     data class Server(
         val urls: List<String>,

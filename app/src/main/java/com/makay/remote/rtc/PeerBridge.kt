@@ -311,7 +311,11 @@ class PeerBridge(
     fun addRemoteCandidate(mid: String?, mline: Int?, cand: String?) {
         if (cand.isNullOrEmpty()) return
         val p = pc ?: return
-        val ice = IceCandidate(cand, mline ?: 0, mid ?: "")
+        // org.webrtc.IceCandidate yapicisi (sdpMid, sdpMLineIndex, sdp) sirasindadir.
+        // Daha once argumanlar ters verildigi icin `sdp` alani "0" gibi gecersiz bir
+        // deger aliyor ve addIceCandidate adayi sessizce reddediyordu; sonuc olarak
+        // hicbir uzak ICE adayi uygulanamiyor ve baglanti (ICE) hic kurulamiyordu.
+        val ice = IceCandidate(mid ?: "", mline ?: 0, cand)
         if (p.remoteDescription == null) {
             if (pendingRemoteIces.size < 200) pendingRemoteIces.add(ice)
             return
