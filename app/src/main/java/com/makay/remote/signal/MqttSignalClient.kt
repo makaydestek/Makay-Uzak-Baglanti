@@ -52,6 +52,8 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
     /** Kendi yayinlarimizi yoksayabilmek icin. */
     private val selfTag: String = java.util.UUID.randomUUID().toString().take(8)
     private val seen = LinkedHashSet<String>()
+    /** Monotonik yayin sirasi — yineleme filtresi icin (bkz. SignalEnvelope.seq). */
+    private val seqCounter = java.util.concurrent.atomic.AtomicLong(0L)
 
     private val messageListener = IMqttMessageListener { _, message -> handleRaw(message) }
 
@@ -247,8 +249,11 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
             if (remote.isNullOrEmpty() || remote != pinHash) return
         }
 
-        // Yinelenen mesajlari ele
-        val key = (env.from ?: "") + "|" + env.ts + "|" + env.type
+        // Yinelenen mesajlari ele — gonderen bazinda `seq` tabanli (bkz.
+        // SignalEnvelope.dedupeKey). Eski `from|ts|type` anahtari ICE
+        // adaylari toplu (ayni milisaniyede) geldigi icin ikinci adayi
+        // "mukerrer" sanip SESSIZCE DUSURUYORDU.
+        val key = env.dedupeKey()
         synchronized(seen) {
             if (seen.contains(key)) return
             seen.add(key)
@@ -274,7 +279,11 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
             version = 1,
             pinHash = pinHash,
             ts = System.currentTimeMillis(),
-            from = selfTag
+            from = selfTag,
+            /* Monotonik siralama: `ts` milisaniye cozunurlugunde oldugu icin ayni
+               anda yayinlanan ICE adaylari (ayni milisaniye duser) eski
+               `from|ts|t` yineleme anahtariyla DUSURULUYORDU. `seq` benzersizdir. */
+            seq = seqCounter.incrementAndGet()
         )
         val raw = gson.toJson(msg).toByteArray(StandardCharsets.UTF_8)
 

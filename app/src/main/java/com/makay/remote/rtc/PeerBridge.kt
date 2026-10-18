@@ -8,6 +8,7 @@ import com.makay.remote.core.Primitives
 import com.makay.remote.core.SdpCode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -100,8 +101,6 @@ class PeerBridge(
     @Volatile private var closed = false
     @Volatile private var makingOffer = false
     private val pendingRemoteIces = ArrayList<IceCandidate>()
-    @Volatile private var firstCandidateSeen = false
-    private var gatheringLatch: java.util.concurrent.CountDownLatch? = null
 
     private val eglBase: EglBase by lazy { EglBase.create() }
 
@@ -183,13 +182,10 @@ class PeerBridge(
 
         override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
 
-        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
-            if (state == PeerConnection.IceGatheringState.COMPLETE) gatheringLatch?.countDown()
-        }
+        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) = Unit
 
         override fun onIceCandidate(candidate: IceCandidate?) {
             if (candidate == null) return
-            firstCandidateSeen = true
             val msg = WireEnvelope(
                 type = WireEnvelope.ICE,
                 mid = candidate.sdpMid ?: "",
@@ -251,21 +247,31 @@ class PeerBridge(
 
     /**
      * ICE adayi toplama bitene kadar bekler.
-     * `engine.js:waitGathering` ile ayni: ilk adaydan 350 ms sonra SDP gider,
-     * kalan adaylar trickle ile sinyale tasinir.
+     *
+     * MASASTU `engine.js:waitGathering` ile AYNI SEMANTIK: donmeden once
+     * SDP'de EN AZ BIR `a=candidate:` satiri oldugunu DOGRULAR.
+     *
+     * Eski surum yalnizca `onIceCandidate` cagrisinin gelip gelmedigine
+     * bakiyordu (`firstCandidateSeen`). Ancak libwebrtc'in
+     * `getLocalDescription()` snapshot'i aday toplandigi anda hemen
+     * guncellenmeyebilir; boylece cevap SDP'si ADAYSIZ gidebiliyordu.
+     * Baglanti boylece tamamen trickle ICE'e baglaniyordu; trickle'da adaylar
+     * kaybolursa (yineleme filtresi hatasi) baglanti HIC kurulamiyordu.
+     * Boylece "Onaylandi -> Baglaniyor" asamasinda takilip kaliyordu.
      */
     private suspend fun waitGathering(timeoutMs: Long = 8_000L) {
-        firstCandidateSeen = false
-        val latch = java.util.concurrent.CountDownLatch(1)
-        gatheringLatch = latch
         val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline && !latch.await(200, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-            if (firstCandidateSeen) {
-                latch.await(350, java.util.concurrent.TimeUnit.MILLISECONDS)
-                break
-            }
+        while (System.currentTimeMillis() < deadline && !sdpHasCandidate()) {
+            delay(50)
         }
-        gatheringLatch = null
+        /* Ilk aday girdikten sonra birkac aday daha yerlessin (350 ms). */
+        if (sdpHasCandidate()) delay(350)
+    }
+
+    /** Yerel SDP'nin su an en az bir ICE adayi icerip icermedigini soyler. */
+    private fun sdpHasCandidate(): Boolean {
+        val sdp = pc?.localDescription?.description ?: return false
+        return sdp.contains("a=candidate:")
     }
 
     // ---------------- teklif / cevap ----------------

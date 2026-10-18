@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.makay.remote.core.InviteParser
 import com.makay.remote.ui.theme.MakayTheme
 
 /**
@@ -122,6 +123,29 @@ fun JoinFormScreen(
             text = "İpucu: Davet metninin tamamını (Kimlik, Şifre ve varsa Sinyal satırı) yapıştırın — bağlantı en sağlam yoldan kurulur.",
             style = MaterialTheme.typography.bodySmall,
             color = c.muted
+        )
+
+        Spacer(Modifier.height(10.dp))
+
+        // --- Kullanilacak baglanti yolu gostergesi ---
+        // Windows'taki "Uzak konum / Yerel ag" secimine karsilik gelir:
+        // davet metninde "Sinyal: http://..." satiri VARSA ayni agdaki
+        // Windows bilgisayarina yerel HTTP sinyal sunucusu uzerinden
+        // dogrudan baglanilir (internet gerekmez); satir YOKSA bulut
+        // eslesmesi (MQTT) kullanilir. Her iki yol da ayni PeerBridge /
+        // WebRTC katmanini paylasir, boylece her ikisi de calisir.
+        val parsedInvite = remember(invite) { InviteParser.parse(invite) }
+        val isLanPath = invite.isNotBlank() && parsedInvite.signalUrl.isNotEmpty()
+        val pathText = when {
+            invite.isBlank() -> "Davet metnini yapıştırın — yol otomatik seçilir"
+            isLanPath -> "Yerel ağ — aynı Wi‑Fi üzerinde doğrudan bağlanılacak"
+            else -> "Bulut eşleşmesi (MQTT) — internet bağlantısı kullanılır"
+        }
+        Text(
+            text = "Bağlantı yolu: $pathText",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (isLanPath) c.accent else c.muted,
+            textAlign = TextAlign.Center
         )
 
         Spacer(Modifier.height(12.dp))
