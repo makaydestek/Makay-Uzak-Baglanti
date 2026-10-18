@@ -35,6 +35,7 @@ import com.makay.remote.ui.theme.MakayTheme
 fun RemoteApp(vm: SessionViewModel) {
     val c = MakayTheme.c
     val state by vm.state.collectAsState()
+    val diagnostics by vm.diagnostics.collectAsState()
     val toasts = remember { SnackbarHostState() }
 
     // Toast akisi -> snackbar
@@ -126,7 +127,11 @@ fun RemoteApp(vm: SessionViewModel) {
                     JoinPendingScreen(room = s.room, onCancel = { vm.backToIdle() })
 
                 is SessionController.State.Connecting ->
-                    ConnectingScreen(asHost = s.asHost, onCancel = { vm.disconnect() })
+                    ConnectingScreen(
+                        asHost = s.asHost,
+                        onCancel = { vm.disconnect() },
+                        diagnostics = diagnostics
+                    )
 
                 is SessionController.State.Connected ->
                     SessionScreen(vm = vm, peerName = s.peerName, asHost = s.asHost)

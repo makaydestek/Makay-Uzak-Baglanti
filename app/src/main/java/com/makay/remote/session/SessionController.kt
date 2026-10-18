@@ -18,6 +18,7 @@ import com.makay.remote.rtc.FileTransferEngine
 import com.makay.remote.rtc.PeerBridge
 import com.makay.remote.rtc.WireEnvelope
 import com.makay.remote.signal.HttpSignalClient
+import com.makay.remote.signal.IceInbox
 import com.makay.remote.signal.MqttSignalClient
 import com.makay.remote.signal.SignalChannel
 import com.makay.remote.signal.SignalEnvelope
@@ -118,6 +119,17 @@ class SessionController(
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    /**
+     * Baglanti sirasindaki WebRTC tani ozeti (tek satir).
+     *
+     * Baglanti "Baglaniyor" ekraninda takildiginda kullaniciya hangi adimda
+     * kaldigini gosterir ve destek icin ekran goruntusu olarak yeterlidir:
+     * ICE durumu, yerel/uzak aday sayilari ve veri kanali durumu.
+     */
+    private val _diagnostics = MutableStateFlow("")
+    val diagnostics: StateFlow<String> = _diagnostics.asStateFlow()
+    private var diagJob: Job? = null
+
     private val _events = MutableSharedFlow<Event>(extraBufferCapacity = 32)
     val events: SharedFlow<Event> = _events.asSharedFlow()
 
@@ -164,6 +176,17 @@ class SessionController(
     private var password: String = ""
     private var lastJoinRequestAt = 0L
     private var intentionalClose = false
+
+    /**
+     * TEKLIFTEN ONCE GELEN UZAK ICE ADAYLARI tamponu — bkz. [IceInbox].
+     *
+     * Masaustu adaylari toplama sirasinda yayar, teklifi toplama bitince
+     * gonderir; boylece telefonda yayin sirasi ONCE ICE, SONRA OFFER'dir
+     * (canli olcum: Windows'tan gelen 9 adayin tamami tekliften once geldi).
+     * Eski kod `peer?.addRemoteCandidate(...)` ile bu adaylari SESSIZCE
+     * DUSURUYORDU; simdi tamponlanip peer olusturulunca uygulanir.
+     */
+    private val pendingIceBeforePeer = IceInbox()
 
     /** Uzak videoyu gosteren renderer icin Egl baglami. */
     fun eglContext(): EglBase.Context? = peer?.eglContext()
@@ -374,6 +397,10 @@ class SessionController(
                 startConnectTimeout()
 
                 val p = createPeer(PeerBridge.Role.ANSWERER)
+                /* Tekliften ONCE gelen uzak adaylari simdi PeerBridge'e ver;
+                   PeerBridge onlari remoteDescription gelene dek tamponlar ve
+                   acceptOffer'da flushRemoteIces() uygular. */
+                flushPendingIce(p)
                 scope.launch(Dispatchers.Default) {
                     try {
                         val answerCode = p.acceptOffer(code)
@@ -396,7 +423,14 @@ class SessionController(
             }
 
             SignalEnvelope.TYPE_ICE -> {
-                peer?.addRemoteCandidate(env.mid, env.mline, env.cand)
+                val p = peer
+                if (p != null) {
+                    p.addRemoteCandidate(env.mid, env.mline, env.cand)
+                } else {
+                    // peer henuz yok (tekliften onceki adaylar) — tamponla,
+                    // peer olusturulunca uygula. bkz. pendingIceBeforePeer.
+                    pendingIceBeforePeer.add(env)
+                }
             }
 
             SignalEnvelope.TYPE_BYE -> {
@@ -431,6 +465,11 @@ class SessionController(
         peer = p
         com.makay.remote.rtc.PeerRegistry.current = p
         return p
+    }
+
+    /** Tekliften once gelen uzak ICE adaylarini yeni olusturulan peer'a devreder. */
+    private fun flushPendingIce(p: PeerBridge) {
+        pendingIceBeforePeer.drain().forEach { p.addRemoteCandidate(it.mid, it.mline, it.cand) }
     }
 
     /**
@@ -809,6 +848,7 @@ class SessionController(
             asHost = false
         }
         lastJoinRequestAt = 0L
+        pendingIceBeforePeer.clear()
         _chat.value = emptyList()
         _controlState.value = ControlState.NONE
         _inboundClipboard.value = null
@@ -821,19 +861,43 @@ class SessionController(
 
     private fun startConnectTimeout() {
         clearConnectTimeout()
+        startDiagSampler()
         connectTimeoutJob = scope.launch {
             delay(CONNECT_TIMEOUT_MS)
             val st = _state.value
             if (st is State.Connecting) {
                 // Masaustu ile ayni uyari; TURN yeniden denemesi su an yapilmaz
                 emitToast("Bağlantı uzun sürüyor — aktarma yolu deneniyor olabilir", "warning")
+                _diagnostics.value = buildString {
+                    append(peer?.diagText() ?: "peer yok")
+                    append(" · ")
+                    append("35 sn'de tamamlanamadı")
+                }
             }
         }
+    }
+
+    /** Baglanti sirasinda WebRTC tani ozetini periyodik olarak UI'a akar. */
+    private fun startDiagSampler() {
+        diagJob?.cancel()
+        diagJob = scope.launch {
+            while (isActive) {
+                _diagnostics.value = peer?.diagText() ?: "eşleşme ağına bağlanılıyor"
+                delay(700)
+            }
+        }
+    }
+
+    private fun stopDiagSampler() {
+        diagJob?.cancel()
+        diagJob = null
+        _diagnostics.value = ""
     }
 
     private fun clearConnectTimeout() {
         connectTimeoutJob?.cancel()
         connectTimeoutJob = null
+        stopDiagSampler()
     }
 
     private fun emitToast(message: String, kind: String) {

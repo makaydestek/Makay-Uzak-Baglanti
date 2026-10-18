@@ -102,6 +102,32 @@ class PeerBridge(
     @Volatile private var makingOffer = false
     private val pendingRemoteIces = ArrayList<IceCandidate>()
 
+    // ---------------- tani sayaclari ----------------
+    // Baglanti "Baglaniyor" ekraninda takildiginda ne oldugunu gormek icin.
+    // ConnectingScreen bunlari okuyup ekranda gosterir; boylece "hangi adimda
+    // kaldi?" sorusu ekrandan cevaplanir.
+    @Volatile var localCandidateCount: Int = 0
+        private set
+    @Volatile var remoteCandidateCount: Int = 0
+        private set
+    @Volatile var pendingRemoteCount: Int = 0
+        private set
+    @Volatile var iceState: String = "new"
+        private set
+    @Volatile var connState: String = "new"
+        private set
+    @Volatile var channelState: String = "new"
+        private set
+    @Volatile var lastDiag: String = ""
+        private set
+
+    /** Baglanti ekranda gosterilen tek satirlik tani ozeti. */
+    fun diagText(): String =
+        "ICE=$iceState · bağlantı=$connState · kanal=$channelState · " +
+            "yerel aday=$localCandidateCount · uzak aday=$remoteCandidateCount" +
+            (if (pendingRemoteCount > 0) " (bekleyen $pendingRemoteCount)" else "") +
+            (if (lastDiag.isNotEmpty()) " · $lastDiag" else "")
+
     private val eglBase: EglBase by lazy { EglBase.create() }
 
     // ---------------- fabrika ----------------
@@ -169,6 +195,7 @@ class PeerBridge(
         override fun onSignalingChange(state: PeerConnection.SignalingState?) = Unit
 
         override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+            iceState = state?.name?.lowercase() ?: "unknown"
             when (state) {
                 PeerConnection.IceConnectionState.FAILED ->
                     listener?.onError("Ağ tünelleri kurulamadı — Ayarlar’dan «Yalnızca TURN» deneyin")
@@ -186,6 +213,7 @@ class PeerBridge(
 
         override fun onIceCandidate(candidate: IceCandidate?) {
             if (candidate == null) return
+            localCandidateCount++
             val msg = WireEnvelope(
                 type = WireEnvelope.ICE,
                 mid = candidate.sdpMid ?: "",
@@ -232,10 +260,13 @@ class PeerBridge(
         }
 
         override fun onConnectionChange(state: PeerConnection.PeerConnectionState?) {
+            connState = state?.name?.lowercase() ?: "unknown"
             when (state) {
                 PeerConnection.PeerConnectionState.CONNECTED -> listener?.onState("ready")
-                PeerConnection.PeerConnectionState.FAILED ->
+                PeerConnection.PeerConnectionState.FAILED -> {
+                    lastDiag = "peer connection failed (ice=$iceState)"
                     listener?.onError("Bağlantı kurulamadı — aktarma yolu deneniyor olabilir")
+                }
                 PeerConnection.PeerConnectionState.DISCONNECTED ->
                     listener?.onError("Bağlantı koptu")
                 else -> Unit
@@ -323,17 +354,30 @@ class PeerBridge(
         // hicbir uzak ICE adayi uygulanamiyor ve baglanti (ICE) hic kurulamiyordu.
         val ice = IceCandidate(mid ?: "", mline ?: 0, cand)
         if (p.remoteDescription == null) {
-            if (pendingRemoteIces.size < 200) pendingRemoteIces.add(ice)
+            synchronized(pendingRemoteIces) {
+                if (pendingRemoteIces.size < 200) pendingRemoteIces.add(ice)
+                pendingRemoteCount = pendingRemoteIces.size
+            }
             return
         }
         runCatching { p.addIceCandidate(ice) }
+            .onSuccess { remoteCandidateCount++ }
+            .onFailure { lastDiag = "addIceCandidate hatasi: ${it.message}" }
     }
 
     private fun flushRemoteIces() {
-        if (pc?.remoteDescription == null || pendingRemoteIces.isEmpty()) return
-        val q = ArrayList(pendingRemoteIces)
-        pendingRemoteIces.clear()
-        q.forEach { runCatching { pc?.addIceCandidate(it) } }
+        val q = synchronized(pendingRemoteIces) {
+            if (pc?.remoteDescription == null || pendingRemoteIces.isEmpty()) return
+            val copy = ArrayList(pendingRemoteIces)
+            pendingRemoteIces.clear()
+            pendingRemoteCount = 0
+            copy
+        }
+        q.forEach {
+            runCatching { pc?.addIceCandidate(it) }
+                .onSuccess { remoteCandidateCount++ }
+                .onFailure { lastDiag = "flush addIceCandidate hatasi: ${it.message}" }
+        }
     }
 
     // ---------------- veri kanali ----------------
@@ -344,6 +388,7 @@ class PeerBridge(
             override fun onBufferedAmountChange(previousAmount: Long) = Unit
 
             override fun onStateChange() {
+                channelState = ch.state()?.name?.lowercase() ?: "unknown"
                 when (ch.state()) {
                     DataChannel.State.OPEN -> sendHello()
                     DataChannel.State.CLOSED -> if (!closed) {

@@ -30,6 +30,36 @@ class SettingsStore(context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("makay_remote", Context.MODE_PRIVATE)
 
+    init {
+        scrubDeadTurnServers()
+    }
+
+    /**
+     * Olmus / kara delik TURN adreslerini acilista temizler.
+     *
+     * `openrelay.metered.ca` (Open Relay) 2026'da kapandi ve artik
+     * 192.0.2.1 (RFC5737 belge adresi) gibi ulasilamaz bir adrese cozuluyor.
+     * Boyle bir TURN girdigi zaman libwebrtc'in ICE toplamasi/ICE kontrol
+     * testleri felce ugruyor ve baglanti "Baglaniyor" ekraninda takilabiliyor
+     * — ayni agda bile. Masaustu tarafinda ayni temizlik `app.js:applyTurnDefaults`
+     * (`_v:4`) ile yapilir; Android'de de yapilmasi gerekir cunku eski
+     * varsayilan deger bir kez kaydedilmisti.
+     *
+     * Kullanici kendi TURN'unu girmisse (cerceveli TURN/TURNs adresi) ve
+     * olmus listede degilse DOKUNULMAZ.
+     */
+    private fun scrubDeadTurnServers() {
+        val raw = prefs.getString(KEY_TURN_URL, "").orEmpty()
+        if (raw.isBlank()) return
+        val entries = raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val alive = entries.filter { u ->
+            DEAD_TURN_MARKERS.none { m -> u.contains(m, ignoreCase = true) }
+        }
+        if (alive.size != entries.size) {
+            prefs.edit().putString(KEY_TURN_URL, alive.joinToString(",")).apply()
+        }
+    }
+
     private fun stringState(key: String, default: String): MutableState<String> =
         mutableStateOf(prefs.getString(key, default) ?: default)
 
@@ -139,6 +169,18 @@ class SettingsStore(context: Context) {
         private const val KEY_TURN_PASS = "turn_pass"
         private const val KEY_LAST_ROOM = "last_room"
         private const val KEY_LAST_PASSWORD = "last_password"
+
+        /**
+         * Olmus / ulasilamaz oldugu bilinen TURN adresi isaretleri.
+         * Bunlarin bulundugu `turn_url` kayitlari acilista temizlenir.
+         * (openrelay.metered.ca 2026'da kapandi -> 192.0.2.1 kara deligi)
+         */
+        private val DEAD_TURN_MARKERS = listOf(
+            "openrelay.metered.ca",
+            "metered.ca",
+            "freeturn.net",
+            "192.0.2.1"
+        )
 
         fun versionName(): String = BuildConfig.VERSION_NAME
     }

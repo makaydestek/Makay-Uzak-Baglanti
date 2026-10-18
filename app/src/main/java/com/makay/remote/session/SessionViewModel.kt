@@ -32,6 +32,9 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     val controlState = controller.controlState
     val remoteVideo = controller.remoteVideo
 
+    /** Baglanti sirasindaki WebRTC tani ozeti (tek satir, "Baglaniyor" ekraninda). */
+    val diagnostics = controller.diagnostics
+
     // ---------------- pano / ses ----------------
 
     /** Gelen pano metni (onay dialoju icin). */

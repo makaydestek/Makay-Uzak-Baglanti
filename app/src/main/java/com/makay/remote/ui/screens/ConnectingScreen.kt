@@ -21,7 +21,11 @@ import com.makay.remote.ui.theme.MakayTheme
 
 /** offer/answer + ICE kuruluyor. */
 @Composable
-fun ConnectingScreen(asHost: Boolean, onCancel: () -> Unit) {
+fun ConnectingScreen(
+    asHost: Boolean,
+    onCancel: () -> Unit,
+    diagnostics: String = ""
+) {
     val c = MakayTheme.c
     Column(
         modifier = Modifier
@@ -41,6 +45,20 @@ fun ConnectingScreen(asHost: Boolean, onCancel: () -> Unit) {
             color = c.muted,
             textAlign = TextAlign.Center
         )
+
+        // Baglanti takildiginda hangi adimda kaldigini gosteren tani satiri.
+        // Destek icin bu satirin ekran goruntusu yeterlidir.
+        if (diagnostics.isNotBlank()) {
+            Spacer(Modifier.height(18.dp))
+            Text(
+                text = diagnostics,
+                style = MaterialTheme.typography.bodySmall,
+                color = c.muted,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
         Spacer(Modifier.height(28.dp))
         OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
             Text("Vazgeç", color = c.danger)
