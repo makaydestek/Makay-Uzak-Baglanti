@@ -132,6 +132,7 @@ class PeerBridge(
         private set
     @Volatile var helloReceived: Boolean = false
         private set
+    @Volatile private var helloPumpStarted = false
 
     /** Baglanti ekranda gosterilen tek satirlik tani ozeti. */
     fun diagText(): String =
@@ -441,27 +442,50 @@ class PeerBridge(
          * KRITIK: katilan (answerer) tarafta kanal, karsinin olusturdugu
          * `onDataChannel` uzerinden gelir ve bu sirada kanal ZATEN acik olabilir.
          * libwebrtc boyle bir kanal icin `onStateChange(OPEN)` olayini geriye
-         * donuk CAGRILMAZ. Eski surumde HELLO yalnizca bu olaydan
-         * gonderildigi icin hic gonderilmiyor, karsi taraf (masaustu) da
-         * beklemeye geciyor ve oturum ICE/kanal acik olmasina ragmen hic
-         * "Bagli" durumuna hic gecmiyordu.
-         *
-         * Bu yuzden kayittan hemen sonra durum elle kontrol edilir.
+         * donuk CAGRILMAZ. Ayrica Electron↔Android'de ilk `send()` bazen
+         * OPEN iken bile false doner — HELLO pompasi yeniden dener.
          */
         maybeSendHello(ch)
+        startHelloPump(ch)
     }
 
-    /** Kanal aciksa HELLO'yu AYNI KEZ gonderir (cift gonderimi engeller). */
+    /** Kanal aciksa HELLO gondermeyi dener (basarisizsa pompa yeniden dener). */
     private fun maybeSendHello(ch: DataChannel) {
         if (closed || helloSent) return
         if (ch.state() != DataChannel.State.OPEN) return
-        helloSent = true
-        /* `send()` basarisiz donerse (kanal durumu degisti / gonderim hatasi)
-           HELLO hic gitmis OLMAZ; karsi taraf sonsuza kadar bekler. Bu yuzden
-           basarisizlik tanitima yazilir ve kanal yeniden acildiginda tekrar denenir. */
-        if (!sendHello()) {
-            helloSent = false
+        if (sendHello()) {
+            helloSent = true
+            lastDiag = "HELLO gönderildi"
+        } else {
             lastDiag = "HELLO gönderilemedi (kanal=${ch.state()})"
+        }
+    }
+
+    /**
+     * OPEN gorunup `send()` false dondugunde (canli olcum: kanal=OPEN,
+     * hello GÖNDERİLMEDİ) HELLO'yu periyodik yeniden dener.
+     */
+    private fun startHelloPump(ch: DataChannel) {
+        if (helloPumpStarted || closed) return
+        helloPumpStarted = true
+        scope.launch(Dispatchers.Default) {
+            var attempt = 0
+            while (!closed && !helloSent && attempt < 40) {
+                delay(200)
+                if (closed || helloSent) break
+                if (ch.state() != DataChannel.State.OPEN) {
+                    attempt++
+                    continue
+                }
+                attempt++
+                if (sendHello()) {
+                    helloSent = true
+                    lastDiag = "HELLO gönderildi (deneme=$attempt)"
+                    Log.i(TAG, lastDiag)
+                    break
+                }
+                lastDiag = "HELLO gönderilemedi (kanal=${ch.state()}, deneme=$attempt)"
+            }
         }
     }
 
@@ -580,20 +604,35 @@ class PeerBridge(
         return true
     }
 
+    /**
+     * Wire zarfini DataChannel'a yazar.
+     *
+     * KRITIK: Electron (Chromium) ↔ Android native WebRTC arasinda metin
+     * karesi (`binary=false`) bazi surumlerde `send()` false doner veya
+     * karsi tarafa hic ulasmaz. Canli olcum: kanal=OPEN iken HELLO
+     * gonderilemiyordu. JSON zarflar binary UTF-8 kare olarak gider;
+     * alici tarafta WireMessageCodec / coerceWireText zaten JSON'u ayirir.
+     */
     private fun send(env: WireEnvelope): Boolean {
         val ch = channel ?: return false
         if (ch.state() != DataChannel.State.OPEN) return false
+        val bytes = gson.toJson(env).toByteArray(Charsets.UTF_8)
+        return trySendBytes(ch, bytes, asBinary = true)
+            || trySendBytes(ch, bytes, asBinary = false)
+    }
+
+    private fun trySendBytes(ch: DataChannel, bytes: ByteArray, asBinary: Boolean): Boolean {
         return try {
-            val ok = ch.send(
-                DataChannel.Buffer(ByteBuffer.wrap(gson.toJson(env).toByteArray(Charsets.UTF_8)), false)
-            )
+            val direct = ByteBuffer.allocateDirect(bytes.size)
+            direct.put(bytes)
+            direct.flip()
+            val ok = ch.send(DataChannel.Buffer(direct, asBinary))
             if (!ok) {
-                lastDiag = "DataChannel.send false (t=${env.type})"
-                Log.w(TAG, lastDiag)
+                Log.w(TAG, "DataChannel.send false (binary=$asBinary, n=${bytes.size})")
             }
             ok
         } catch (e: Exception) {
-            Log.w(TAG, "Gonderim hatasi: ${e.message}")
+            Log.w(TAG, "Gonderim hatasi (binary=$asBinary): ${e.message}")
             false
         }
     }
@@ -601,12 +640,7 @@ class PeerBridge(
     private fun sendBinary(bytes: ByteArray): Boolean {
         val ch = channel ?: return false
         if (ch.state() != DataChannel.State.OPEN) return false
-        return try {
-            ch.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), true))
-            true
-        } catch (e: Exception) {
-            false
-        }
+        return trySendBytes(ch, bytes, asBinary = true)
     }
 
     // ---------------- dis API ----------------
@@ -717,13 +751,14 @@ class PeerBridge(
     fun close(reason: String = "") {
         if (closed) return
         closed = true
+        helloPumpStarted = false
         runCatching {
-            channel?.send(
-                DataChannel.Buffer(
-                    ByteBuffer.wrap(gson.toJson(WireEnvelope(type = WireEnvelope.BYE, reason = reason)).toByteArray(Charsets.UTF_8)),
-                    false
-                )
-            )
+            val ch = channel
+            if (ch != null && ch.state() == DataChannel.State.OPEN) {
+                val bytes = gson.toJson(WireEnvelope(type = WireEnvelope.BYE, reason = reason))
+                    .toByteArray(Charsets.UTF_8)
+                trySendBytes(ch, bytes, asBinary = true)
+            }
         }
         runCatching { channel?.close() }
         runCatching { pc?.close() }
