@@ -43,10 +43,14 @@ class ScreenShareService : Service() {
     private var videoSource: VideoSource? = null
     private var helper: SurfaceTextureHelper? = null
     private var running = false
+    private var baseW = 1280
+    private var baseH = 720
+    private var baseFps = 24
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        instance = this
         if (running) {
             Log.i(TAG, "Zaten calisiyor")
             return START_NOT_STICKY
@@ -109,11 +113,32 @@ class ScreenShareService : Service() {
         helper = h
 
         capt.initialize(h, this, source.capturerObserver)
+        baseW = width
+        baseH = height
+        baseFps = fps
         capt.startCapture(width, height, fps)
         Log.i(TAG, "Capture $width×$height @ ${fps}fps")
 
         // PeerBridge track'i ekler ve yeniden pazarligi baslatir
         peer.addScreenShareTrack(source, h, width, height)
+    }
+
+    private fun applyTier(tier: Int) {
+        val capt = capturer ?: return
+        val scale = when (tier) {
+            2 -> 0.5f
+            1 -> 0.75f
+            else -> 1f
+        }
+        val fps = when (tier) {
+            2 -> (baseFps * 0.5f).toInt().coerceAtLeast(8)
+            1 -> (baseFps * 0.75f).toInt().coerceAtLeast(10)
+            else -> baseFps
+        }
+        val w = (baseW * scale).toInt().coerceAtLeast(320).let { it - it % 2 }
+        val h = (baseH * scale).toInt().coerceAtLeast(240).let { it - it % 2 }
+        runCatching { capt.changeCaptureFormat(w, h, fps) }
+        Log.i(TAG, "Adaptive tier=$tier → $w×$h @$fps")
     }
 
     /**
@@ -172,6 +197,7 @@ class ScreenShareService : Service() {
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         stopSharing()
         super.onDestroy()
     }
@@ -216,6 +242,13 @@ class ScreenShareService : Service() {
 
         const val EXTRA_RESULT_CODE = "makay.result_code"
         const val EXTRA_RESULT_DATA = "makay.result_data"
+
+        @Volatile private var instance: ScreenShareService? = null
+
+        /** Adaptive: 0=tam, 1=%75, 2=%50 — host ekran paylasirken. */
+        fun applyAdaptiveTier(tier: Int) {
+            instance?.applyTier(tier.coerceIn(0, 2))
+        }
 
         /**
          * Servisi baslatir.

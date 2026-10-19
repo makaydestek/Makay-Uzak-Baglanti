@@ -112,7 +112,9 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
     val ctrlSent by vm.ctrlSent.collectAsState()
     val fileProgress by vm.fileProgress.collectAsState()
     val peerMic by vm.peerMicState.collectAsState()
+    val linkQuality by vm.linkQuality.collectAsState()
     val context = LocalContext.current
+    var showKeyStrip by remember { mutableStateOf(false) }
 
     // --- pano / ses durumlari ---
     val inboundClip by vm.inboundClipboard.collectAsState()
@@ -257,6 +259,27 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
                     .padding(8.dp)
                     .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
                     .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+        }
+
+        /* Baglanti kalitesi rozeti */
+        if (linkQuality.level != "unknown" && linkQuality.label.isNotBlank()) {
+            val qColor = when (linkQuality.level) {
+                "good" -> Color(0xFF4CAF50)
+                "ok" -> Color(0xFFFFC107)
+                "poor" -> Color(0xFFF44336)
+                else -> Color.White
+            }
+            Text(
+                text = linkQuality.label,
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(start = 8.dp, top = 48.dp)
+                    .background(qColor.copy(alpha = 0.85f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
             )
         }
 
@@ -413,9 +436,12 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
                         }
                         CompactIconBtn(
                             icon = Icons.Filled.Keyboard,
-                            tint = c.muted,
-                            desc = "Yaz"
-                        ) { showKeyboard = true }
+                            tint = if (showKeyStrip) c.accent else c.muted,
+                            desc = "Klavye"
+                        ) {
+                            showKeyStrip = !showKeyStrip
+                            if (!showKeyStrip) showKeyboard = false
+                        }
                     }
 
                     CompactIconBtn(
@@ -455,6 +481,16 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
                         tint = if (toolsExpanded) c.accent else c.muted,
                         desc = "Diğer"
                     ) { toolsExpanded = !toolsExpanded }
+                }
+
+                if (showKeyStrip && !asHost && controlState == SessionController.ControlState.GRANTED) {
+                    Spacer(Modifier.height(4.dp))
+                    KeyStrip(
+                        onKey = { vm.sendNamedKey(it) },
+                        onChord = { keys -> vm.sendKeyChord(*keys) },
+                        onType = { showKeyboard = true },
+                        c = c
+                    )
                 }
 
                 if (toolsExpanded && !asHost && controlState == SessionController.ControlState.GRANTED) {
@@ -652,6 +688,74 @@ private fun CompactIconBtn(
 ) {
     IconButton(onClick = onClick, modifier = Modifier.size(42.dp)) {
         Icon(icon, contentDescription = desc, tint = tint, modifier = Modifier.size(22.dp))
+    }
+}
+
+/** AnyDesk tarzı hızlı tuş şeridi — InputRelay adlarıyla birebir. */
+@Composable
+private fun KeyStrip(
+    onKey: (String) -> Unit,
+    onChord: (Array<String>) -> Unit,
+    onType: () -> Unit,
+    c: com.makay.remote.ui.theme.MakayColors
+) {
+    val keys = listOf(
+        "Esc" to "escape",
+        "Tab" to "tab",
+        "Win" to "win",
+        "⌫" to "backspace",
+        "↵" to "enter",
+        "↑" to "arrowup",
+        "↓" to "arrowdown",
+        "←" to "arrowleft",
+        "→" to "arrowright"
+    )
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            keys.forEach { (label, name) ->
+                OutlinedButton(
+                    onClick = { onKey(name) },
+                    modifier = Modifier.weight(1f),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                ) {
+                    Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            OutlinedButton(
+                onClick = { onChord(arrayOf("control", "c")) },
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
+            ) { Text("Ctrl+C", style = MaterialTheme.typography.labelSmall) }
+            OutlinedButton(
+                onClick = { onChord(arrayOf("control", "v")) },
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
+            ) { Text("Ctrl+V", style = MaterialTheme.typography.labelSmall) }
+            OutlinedButton(
+                onClick = { onChord(arrayOf("control", "a")) },
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
+            ) { Text("Ctrl+A", style = MaterialTheme.typography.labelSmall) }
+            OutlinedButton(
+                onClick = { onChord(arrayOf("control", "z")) },
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
+            ) { Text("Ctrl+Z", style = MaterialTheme.typography.labelSmall) }
+            OutlinedButton(
+                onClick = onType,
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
+            ) { Text("Yaz…", style = MaterialTheme.typography.labelSmall, color = c.accent) }
+        }
     }
 }
 

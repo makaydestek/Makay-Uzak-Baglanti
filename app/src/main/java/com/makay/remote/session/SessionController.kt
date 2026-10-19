@@ -136,6 +136,13 @@ class SessionController(
     val diagnostics: StateFlow<String> = _diagnostics.asStateFlow()
     private var diagJob: Job? = null
 
+    /** Bagli oturumda baglanti kalitesi: good|ok|poor|unknown (+RTT metni). */
+    data class LinkQuality(val level: String = "unknown", val label: String = "")
+    private val _linkQuality = MutableStateFlow(LinkQuality())
+    val linkQuality: StateFlow<LinkQuality> = _linkQuality.asStateFlow()
+    private var linkJob: Job? = null
+    private var adaptiveTier = 0
+
     /** Onay beklerken kullaniciya gosterilen kisa durum (join-request yayini). */
     private val _joinHint = MutableStateFlow("")
     val joinHint: StateFlow<String> = _joinHint.asStateFlow()
@@ -724,6 +731,7 @@ class SessionController(
             stopDiagSampler()
             _diagnostics.value = ""
             _state.value = State.Connected(peerName, asHost)
+            startLinkMonitor()
             /* Katilan (teknisyen): Windows offerer zaten control.sharer=true —
                onay modalı yok, ctrl-ok gelmez. Kontrolü hemen etkinleştir;
                ctrl-req Windows'a bildirilir (badge / input-relay zaten acik). */
@@ -1102,6 +1110,15 @@ class SessionController(
         return ok
     }
 
+    /** InputRelay adli tus: escape, enter, win, arrowup… */
+    fun sendNamedKey(name: String): Boolean {
+        val k = name.trim().lowercase()
+        if (k.isEmpty()) return false
+        val a = sendControl(ControlPayload(ControlPayload.KEY_DOWN, k = k))
+        val b = sendControl(ControlPayload(ControlPayload.KEY_UP, k = k))
+        return a && b
+    }
+
     fun cancelFileTransfer(fid: String) {
         peer?.cancelFileSend(fid)
         _fileProgress.value = null
@@ -1157,6 +1174,7 @@ class SessionController(
         softResubJob = null
         reconnectJob?.cancel()
         reconnectJob = null
+        stopLinkMonitor()
         clearConnectTimeout()
         connectedOnce = false
         _joinHint.value = ""
@@ -1232,6 +1250,66 @@ class SessionController(
         diagJob?.cancel()
         diagJob = null
         if (_state.value !is State.Connected) _diagnostics.value = ""
+    }
+
+    /** Bagli iken RTT/bitrate izle + adaptive bitrate (host). */
+    private fun startLinkMonitor() {
+        linkJob?.cancel()
+        adaptiveTier = 0
+        linkJob = scope.launch {
+            while (isActive && _state.value is State.Connected) {
+                val p = peer ?: break
+                p.sampleLinkStats { stats ->
+                    val label = buildString {
+                        when (stats.quality) {
+                            "good" -> append("İyi")
+                            "ok" -> append("Orta")
+                            "poor" -> append("Zayıf")
+                            else -> append("…")
+                        }
+                        if (stats.rttMs >= 0) append(" · ${stats.rttMs} ms")
+                        if (stats.candidateType.isNotBlank()) {
+                            append(" · ")
+                            append(
+                                when (stats.candidateType) {
+                                    "relay" -> "TURN"
+                                    "srflx" -> "STUN"
+                                    "host" -> "P2P"
+                                    else -> stats.candidateType
+                                }
+                            )
+                        }
+                    }
+                    _linkQuality.value = LinkQuality(stats.quality, label)
+                    if (asHost) {
+                        val want = when (stats.quality) {
+                            "poor" -> 2
+                            "ok" -> 1
+                            "good" -> 0
+                            else -> adaptiveTier
+                        }
+                        if (want != adaptiveTier) {
+                            adaptiveTier = want
+                            com.makay.remote.service.ScreenShareService.applyAdaptiveTier(want)
+                            val bps = when (want) {
+                                2 -> 400_000
+                                1 -> 1_200_000
+                                else -> null
+                            }
+                            p.setVideoMaxBitrateBps(bps)
+                        }
+                    }
+                }
+                delay(2000)
+            }
+        }
+    }
+
+    private fun stopLinkMonitor() {
+        linkJob?.cancel()
+        linkJob = null
+        _linkQuality.value = LinkQuality()
+        adaptiveTier = 0
     }
 
     private fun clearConnectTimeout(stopDiag: Boolean = true) {

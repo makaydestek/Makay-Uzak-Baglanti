@@ -86,6 +86,9 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     fun sendRightClick() = controller.sendRightClickAtPointer()
     fun notePointer(x: Double, y: Double) = controller.notePointer(x, y)
     fun typeText(text: String) = controller.typeText(text)
+    fun sendNamedKey(name: String) = controller.sendNamedKey(name)
+    fun sendKeyChord(vararg keys: String) = controller.sendKeyChord(*keys)
+    val linkQuality = controller.linkQuality
     fun cancelFileTransfer(fid: String) = controller.cancelFileTransfer(fid)
 
     // ---------------- pano ----------------

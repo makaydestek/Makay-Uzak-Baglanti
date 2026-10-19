@@ -148,6 +148,92 @@ class PeerBridge(
             (if (helloReceived) "karşı geldi" else "karşı HELLO YOK") +
             (if (lastDiag.isNotEmpty()) " · $lastDiag" else "")
 
+    data class LinkStats(
+        val rttMs: Int = -1,
+        val bitrateKbps: Int = -1,
+        val packetsLost: Int = 0,
+        val candidateType: String = "",
+        /** good | ok | poor | unknown */
+        val quality: String = "unknown"
+    )
+
+    @Volatile var lastLinkStats: LinkStats = LinkStats()
+        private set
+
+    /**
+     * WebRTC getStats — RTT / bitrate / kayıp. Adaptive ve baglanti rozeti icin.
+     * RTC thread'de calisir; sonuc main'de lastLinkStats'e yazilir.
+     */
+    fun sampleLinkStats(onDone: ((LinkStats) -> Unit)? = null) {
+        val p = pc
+        if (p == null) {
+            val empty = LinkStats()
+            lastLinkStats = empty
+            onDone?.let { mainHandler.post { it(empty) } }
+            return
+        }
+        RtcEngine.post {
+            p.getStats { report ->
+                var rtt = -1
+                var bitrate = -1
+                var lost = 0
+                var cand = ""
+                report.statsMap.values.forEach { s ->
+                    val t = s.type
+                    val m = s.members
+                    when {
+                        t == "candidate-pair" && m["state"] == "succeeded" -> {
+                            val r = m["currentRoundTripTime"] as? Number
+                            if (r != null) rtt = (r.toDouble() * 1000).toInt()
+                            val avail = m["availableOutgoingBitrate"] as? Number
+                            if (avail != null && bitrate < 0) bitrate = (avail.toDouble() / 1000).toInt()
+                        }
+                        t == "inbound-rtp" && m["kind"] == "video" -> {
+                            val br = m["bytesReceived"] as? Number
+                            /* anlik bitrate yoksa framesDecoded ile yetin */
+                            val pl = m["packetsLost"] as? Number
+                            if (pl != null) lost += pl.toInt()
+                        }
+                        t == "outbound-rtp" && m["kind"] == "video" -> {
+                            val pl = m["packetsLost"] as? Number
+                            if (pl != null) lost += pl.toInt()
+                            val tbr = m["targetBitrate"] as? Number
+                            if (tbr != null) bitrate = (tbr.toDouble() / 1000).toInt()
+                        }
+                        t == "remote-candidate" || t == "local-candidate" -> {
+                            val ct = m["candidateType"] as? String
+                            if (!ct.isNullOrBlank() && cand.isEmpty()) cand = ct
+                        }
+                    }
+                }
+                val q = when {
+                    rtt < 0 && bitrate < 0 -> "unknown"
+                    rtt in 0..120 && lost < 8 -> "good"
+                    rtt in 0..280 && lost < 40 -> "ok"
+                    else -> "poor"
+                }
+                val stats = LinkStats(rtt, bitrate, lost, cand, q)
+                lastLinkStats = stats
+                mainHandler.post { onDone?.invoke(stats) }
+            }
+        }
+    }
+
+    /** Cikis video bitrate tavanı (adaptive). null = sinir kaldir. */
+    fun setVideoMaxBitrateBps(maxBps: Int?) {
+        RtcEngine.post {
+            val p = pc ?: return@post
+            p.senders.forEach { sender ->
+                if (sender.track()?.kind() != MediaStreamTrack.VIDEO_TRACK_KIND) return@forEach
+                val params = sender.parameters
+                params.encodings?.forEach { enc ->
+                    enc.maxBitrateBps = maxBps
+                }
+                runCatching { sender.parameters = params }
+            }
+        }
+    }
+
     // ---------------- fabrika (surec boyu paylasilan RtcEngine) ----------------
 
     private fun ensureFactory(): PeerConnectionFactory = RtcEngine.factory(appContext)
