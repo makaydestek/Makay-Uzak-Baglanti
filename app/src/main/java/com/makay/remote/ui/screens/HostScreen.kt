@@ -21,12 +21,17 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -46,7 +51,7 @@ fun HostScreen(
     password: String,
     inviteText: String,
     awaitingName: String? = null,
-    onAllow: (() -> Unit)? = null,
+    onAllow: ((trustDevice: Boolean) -> Unit)? = null,
     onDeny: (() -> Unit)? = null,
     onDisconnect: () -> Unit
 ) {
@@ -135,16 +140,32 @@ fun HostScreen(
         }
     }
 
-    // Join-request onay dialogu (masaustu joinReqModal ile ayni islev)
     if (awaitingName != null && onAllow != null && onDeny != null) {
+        var trust by remember { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = { /* zorunlu: istek surekli yenilenir */ },
+            onDismissRequest = { },
             containerColor = c.bg2,
             title = { Text("Bağlantı isteği", color = c.text) },
-            text = { Text("«$awaitingName» bu cihaza bağlanmak istiyor.", color = c.text) },
+            text = {
+                Column {
+                    Text(
+                        "«$awaitingName» bu cihaza bağlanmak istiyor.",
+                        color = c.text
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = trust, onCheckedChange = { trust = it })
+                        Text(
+                            "Güvenli cihaz olarak kaydet (isteğe bağlı)\nSonraki bağlantılarda İzin Ver gerekmez · 30 gün",
+                            color = c.muted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
             confirmButton = {
                 Button(
-                    onClick = onAllow,
+                    onClick = { onAllow(trust) },
                     colors = ButtonDefaults.buttonColors(containerColor = c.success)
                 ) { Text("İzin Ver") }
             },

@@ -30,6 +30,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        /* WebRTC fabrikasini ana thread'de onceden kur — "Izin Ver" aninda
+           arka planda initialize/egl crash riskini azaltir. */
+        runCatching { com.makay.remote.rtc.RtcEngine.ensure(applicationContext) }
         consumeUpdateIntent(intent)
         setContent {
             // Tema tercihi: "system" sistem ayarini, digerleri zorlar.

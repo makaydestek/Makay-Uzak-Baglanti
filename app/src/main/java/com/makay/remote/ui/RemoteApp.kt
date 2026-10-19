@@ -56,6 +56,7 @@ fun RemoteApp(vm: SessionViewModel) {
 
     // Ayarlar ekrani acik mi? Yalnizca Idle durumunda erisilebilir.
     var showSettings by remember { mutableStateOf(false) }
+    var settingsTick by remember { mutableStateOf(0) }
     // Idle'a donecegimizde ayarlar ekranini kapat.
     LaunchedEffect(state) { if (state !is SessionController.State.Idle) showSettings = false }
 
@@ -85,6 +86,9 @@ fun RemoteApp(vm: SessionViewModel) {
                             turnUrl = vm.settings.turnUrl,
                             turnUser = vm.settings.turnUser,
                             turnPass = vm.settings.turnPass,
+                            rememberPassword = vm.settings.rememberPassword,
+                            videoQuality = vm.settings.videoQuality,
+                            trustedDevices = remember(settingsTick) { vm.settings.trustedDevices() },
                             onDeviceName = { vm.settings.deviceName = it },
                             onThemeMode = { vm.setThemeMode(it) },
                             onMqttBroker = { vm.settings.mqttBroker = it },
@@ -93,6 +97,16 @@ fun RemoteApp(vm: SessionViewModel) {
                             onTurnUrl = { vm.settings.turnUrl = it },
                             onTurnUser = { vm.settings.turnUser = it },
                             onTurnPass = { vm.settings.turnPass = it },
+                            onRememberPassword = { vm.settings.rememberPassword = it },
+                            onVideoQuality = { vm.settings.videoQuality = it },
+                            onUntrust = { id ->
+                                vm.untrustDevice(id)
+                                settingsTick++
+                            },
+                            onClearTrusted = {
+                                vm.clearTrustedDevices()
+                                settingsTick++
+                            },
                             onBack = { showSettings = false }
                         )
                     } else {
@@ -119,7 +133,7 @@ fun RemoteApp(vm: SessionViewModel) {
                         password = "",
                         inviteText = inviteText.orEmpty(),
                         awaitingName = s.requesterName,
-                        onAllow = { vm.allowJoin() },
+                        onAllow = { trust -> vm.allowJoin(trust) },
                         onDeny = { vm.denyJoin() },
                         onDisconnect = { vm.disconnect() }
                     )

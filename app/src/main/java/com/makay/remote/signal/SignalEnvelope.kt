@@ -38,7 +38,9 @@ data class SignalEnvelope(
     @SerializedName("ufrag") val ufrag: String? = null,
 
     // Katilim / istek
-    @SerializedName("name") val name: String? = null
+    @SerializedName("name") val name: String? = null,
+    /** Kalici cihaz kimligi — guvenli cihaz listesi icin (AnyDesk/TV tarzi). */
+    @SerializedName("deviceId") val deviceId: String? = null
 ) {
     /**
      * Yineleme (dedupe) anahtari.

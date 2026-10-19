@@ -6,6 +6,8 @@ import com.google.gson.Gson
 import com.makay.remote.core.IceConfig
 import com.makay.remote.core.Primitives
 import com.makay.remote.core.SdpCode
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -15,8 +17,6 @@ import kotlinx.coroutines.withContext
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
 import org.webrtc.DataChannel
-import org.webrtc.DefaultVideoDecoderFactory
-import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
@@ -30,8 +30,6 @@ import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
-import org.webrtc.audio.AudioDeviceModule
-import org.webrtc.audio.JavaAudioDeviceModule
 import java.nio.ByteBuffer
 import kotlin.coroutines.resume
 
@@ -84,8 +82,6 @@ class PeerBridge(
     val files = FileTransferEngine()
 
     private val gson = com.makay.remote.core.WireJson.gson
-    private var factory: PeerConnectionFactory? = null
-    private var audioDeviceModule: AudioDeviceModule? = null
     private var pc: PeerConnection? = null
     private var channel: DataChannel? = null
     private var localVideoTrack: VideoTrack? = null
@@ -99,7 +95,11 @@ class PeerBridge(
         private set
 
     @Volatile private var closed = false
+    /** close() dispose tamamlandi mi — CLOSED erken closed=true yapmasin diye ayri. */
+    @Volatile private var disposed = false
     @Volatile private var makingOffer = false
+    /** acceptOffer/start sirasinda artar; close ile stale continuation engellenir. */
+    @Volatile private var setupGen = 0
     private val pendingRemoteIces = ArrayList<IceCandidate>()
 
     // ---------------- tani sayaclari ----------------
@@ -133,6 +133,9 @@ class PeerBridge(
     @Volatile var helloReceived: Boolean = false
         private set
     @Volatile private var helloPumpStarted = false
+    /** UI listener cagrilari icin ana looper (Compose). */
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val sendLock = Any()
 
     /** Baglanti ekranda gosterilen tek satirlik tani ozeti. */
     fun diagText(): String =
@@ -145,33 +148,11 @@ class PeerBridge(
             (if (helloReceived) "karşı geldi" else "karşı HELLO YOK") +
             (if (lastDiag.isNotEmpty()) " · $lastDiag" else "")
 
-    private val eglBase: EglBase by lazy { EglBase.create() }
+    // ---------------- fabrika (surec boyu paylasilan RtcEngine) ----------------
 
-    // ---------------- fabrika ----------------
+    private fun ensureFactory(): PeerConnectionFactory = RtcEngine.factory(appContext)
 
-    private fun ensureFactory(): PeerConnectionFactory {
-        factory?.let { return it }
-        PeerConnectionFactory.initialize(
-            PeerConnectionFactory.InitializationOptions.builder(appContext)
-                .setEnableInternalTracer(false)
-                .createInitializationOptions()
-        )
-        val adm = JavaAudioDeviceModule.builder(appContext)
-            .setUseHardwareAcousticEchoCanceler(true)
-            .setUseHardwareNoiseSuppressor(true)
-            .createAudioDeviceModule()
-        audioDeviceModule = adm
-
-        val f = PeerConnectionFactory.builder()
-            .setAudioDeviceModule(adm)
-            .setVideoEncoderFactory(
-                DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
-            )
-            .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBase.eglBaseContext))
-            .createPeerConnectionFactory()
-        factory = f
-        return f
-    }
+    private fun eglBase(): EglBase = RtcEngine.egl(appContext)
 
     private fun buildIceServers(): List<PeerConnection.IceServer> {
         val out = ArrayList<PeerConnection.IceServer>()
@@ -215,11 +196,11 @@ class PeerBridge(
             iceState = state?.name?.lowercase() ?: "unknown"
             when (state) {
                 PeerConnection.IceConnectionState.FAILED ->
-                    listener?.onError("Ağ tünelleri kurulamadı — Ayarlar’dan «Yalnızca TURN» deneyin")
+                    notifyListener { onError("Ağ tünelleri kurulamadı — Ayarlar’dan «Yalnızca TURN» deneyin") }
                 PeerConnection.IceConnectionState.DISCONNECTED ->
-                    listener?.onError("Bağlantı koptu — yeniden bağlanılıyor")
+                    notifyListener { onError("Bağlantı koptu — yeniden bağlanılıyor") }
                 PeerConnection.IceConnectionState.COMPLETED,
-                PeerConnection.IceConnectionState.CHECKING -> listener?.onState("connecting")
+                PeerConnection.IceConnectionState.CHECKING -> notifyListener { onState("connecting") }
                 else -> Unit
             }
         }
@@ -229,7 +210,7 @@ class PeerBridge(
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) = Unit
 
         override fun onIceCandidate(candidate: IceCandidate?) {
-            if (candidate == null) return
+            if (candidate == null || closed) return
             localCandidateCount++
             val msg = WireEnvelope(
                 type = WireEnvelope.ICE,
@@ -246,32 +227,35 @@ class PeerBridge(
         override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) = Unit
 
         override fun onAddStream(stream: org.webrtc.MediaStream?) {
-            stream?.videoTracks?.firstOrNull()?.let { listener?.onRemoteVideo(it) }
-            stream?.audioTracks?.firstOrNull()?.let { listener?.onRemoteAudio(it) }
+            stream?.videoTracks?.firstOrNull()?.let { t -> notifyListener { onRemoteVideo(t) } }
+            stream?.audioTracks?.firstOrNull()?.let { t -> notifyListener { onRemoteAudio(t) } }
         }
 
         override fun onRemoveStream(stream: org.webrtc.MediaStream?) {
-            listener?.onRemoteVideo(null)
+            notifyListener { onRemoteVideo(null) }
         }
 
         override fun onDataChannel(ch: DataChannel?) {
-            ch?.let { bindChannel(it) }
+            if (closed || ch == null) return
+            RtcEngine.post { if (!closed) bindChannel(ch) }
         }
 
-        override fun onRenegotiationNeeded() = negotiate()
+        override fun onRenegotiationNeeded() {
+            if (!closed) negotiate()
+        }
 
         override fun onAddTrack(receiver: RtpReceiver?, mediaStreams: Array<out org.webrtc.MediaStream>?) {
             when (val t = receiver?.track()) {
-                is VideoTrack -> listener?.onRemoteVideo(t)
-                is AudioTrack -> listener?.onRemoteAudio(t)
+                is VideoTrack -> notifyListener { onRemoteVideo(t) }
+                is AudioTrack -> notifyListener { onRemoteAudio(t) }
                 else -> Unit
             }
         }
 
         override fun onTrack(transceiver: RtpTransceiver?) {
             when (val t = transceiver?.receiver?.track()) {
-                is VideoTrack -> listener?.onRemoteVideo(t)
-                is AudioTrack -> listener?.onRemoteAudio(t)
+                is VideoTrack -> notifyListener { onRemoteVideo(t) }
+                is AudioTrack -> notifyListener { onRemoteAudio(t) }
                 else -> Unit
             }
         }
@@ -279,15 +263,21 @@ class PeerBridge(
         override fun onConnectionChange(state: PeerConnection.PeerConnectionState?) {
             connState = state?.name?.lowercase() ?: "unknown"
             when (state) {
-                PeerConnection.PeerConnectionState.CONNECTED -> listener?.onState("ready")
+                PeerConnection.PeerConnectionState.CONNECTED -> notifyListener { onState("ready") }
                 PeerConnection.PeerConnectionState.FAILED -> {
                     lastDiag = "peer connection failed (ice=$iceState)"
-                    listener?.onError("Bağlantı kurulamadı — aktarma yolu deneniyor olabilir")
+                    notifyListener { onError("Bağlantı kurulamadı — aktarma yolu deneniyor olabilir") }
                 }
                 PeerConnection.PeerConnectionState.DISCONNECTED ->
-                    listener?.onError("Bağlantı koptu")
+                    notifyListener { onError("Bağlantı koptu") }
                 else -> Unit
             }
+        }
+    }
+
+    private fun checkAlive(p: PeerConnection, gen: Int) {
+        if (closed || disposed || pc !== p || gen != setupGen) {
+            throw IllegalStateException("Bağlantı kurulurken kapatıldı")
         }
     }
 
@@ -325,41 +315,68 @@ class PeerBridge(
     // ---------------- teklif / cevap ----------------
 
     /** Baglatan taraf: davet kodu uretir. */
-    suspend fun start(): String = withContext(Dispatchers.Default) {
+    suspend fun start(): String = RtcEngine.withRtc {
+        val gen = ++setupGen
+        CrashLog.breadcrumb("start createPc")
         val p = createPc()
         pc = p
         val init = DataChannel.Init().also { it.ordered = true }
         channel = p.createDataChannel(CHANNEL, init)?.also { bindChannel(it) }
 
         val offer = createOfferSdp(p)
+        checkAlive(p, gen)
         setLocalSdp(p, SessionDescription(SessionDescription.Type.OFFER, offer.description))
+        checkAlive(p, gen)
         waitGathering()
+        checkAlive(p, gen)
         SdpCode.encode(p.localDescription?.description ?: offer.description, deviceName, sessionId, "O")
     }
 
-    /** Katilan taraf: davet kodunu isler, cevap kodu dondurur. */
-    suspend fun acceptOffer(code: String): String = withContext(Dispatchers.Default) {
-        val dec = SdpCode.decode(code)
-        sessionId = dec.sessionId.ifEmpty { sessionId }
-        peerName = dec.name
+    /**
+     * Katilan taraf: davet kodunu isler, cevap kodu dondurur.
+     * Tum PeerConnection / DataChannel native islemleri tek RTC thread'de
+     * (RtcEngine) — Izin Ver sonrasi ani kapanmayi onlemek icin.
+     */
+    suspend fun acceptOffer(code: String): String {
+        val dec = withContext(Dispatchers.Default) { SdpCode.decode(code) }
+        return RtcEngine.withRtc {
+            val gen = ++setupGen
+            CrashLog.breadcrumb("acceptOffer createPc sid=${dec.sessionId.take(8)}")
+            sessionId = dec.sessionId.ifEmpty { sessionId }
+            peerName = dec.name
 
-        val p = createPc()
-        pc = p
-        setRemoteSdp(p, SessionDescription(SessionDescription.Type.OFFER, dec.sdp))
-        flushRemoteIces()
-        val answer = createAnswerSdp(p)
-        setLocalSdp(p, SessionDescription(SessionDescription.Type.ANSWER, answer.description))
-        waitGathering()
-        SdpCode.encode(p.localDescription?.description ?: answer.description, deviceName, sessionId, "A")
+            val p = createPc()
+            pc = p
+            CrashLog.breadcrumb("acceptOffer setRemote")
+            setRemoteSdp(p, SessionDescription(SessionDescription.Type.OFFER, dec.sdp))
+            checkAlive(p, gen)
+            flushRemoteIces()
+            CrashLog.breadcrumb("acceptOffer createAnswer")
+            val answer = createAnswerSdp(p)
+            checkAlive(p, gen)
+            setLocalSdp(p, SessionDescription(SessionDescription.Type.ANSWER, answer.description))
+            checkAlive(p, gen)
+            waitGathering()
+            checkAlive(p, gen)
+            CrashLog.breadcrumb("acceptOffer answer hazir")
+            val local = p.localDescription?.description ?: answer.description
+            withContext(Dispatchers.Default) {
+                SdpCode.encode(local, deviceName, sessionId, "A")
+            }
+        }
     }
 
     /** Baglatan taraf: cevap kodunu uygular. */
-    suspend fun acceptAnswer(code: String) = withContext(Dispatchers.Default) {
-        val dec = SdpCode.decode(code)
+    suspend fun acceptAnswer(code: String) {
+        val dec = withContext(Dispatchers.Default) { SdpCode.decode(code) }
         if (dec.kind != "A") throw IllegalArgumentException("Bu kod cevap kodu değil")
-        val p = pc ?: throw IllegalStateException("Bağlantı yok")
-        setRemoteSdp(p, SessionDescription(SessionDescription.Type.ANSWER, dec.sdp))
-        flushRemoteIces()
+        RtcEngine.withRtc {
+            val p = pc ?: throw IllegalStateException("Bağlantı yok")
+            val gen = setupGen
+            setRemoteSdp(p, SessionDescription(SessionDescription.Type.ANSWER, dec.sdp))
+            checkAlive(p, gen)
+            flushRemoteIces()
+        }
     }
 
     fun addRemoteCandidate(mid: String?, mline: Int?, cand: String?) {
@@ -369,22 +386,33 @@ class PeerBridge(
         // deger aliyor ve addIceCandidate adayi sessizce reddediyordu; sonuc olarak
         // hicbir uzak ICE adayi uygulanamiyor ve baglanti (ICE) hic kurulamiyordu.
         val ice = IceCandidate(mid ?: "", mline ?: 0, cand)
-        val p = pc
         /* PeerConnection henuz yoksa (IceInbox flush, createPeer hemen sonrasi)
            adaylari tamponla — eski kod `pc ?: return` ile bunlari DUSURUYORDU
            ve `uzak aday=0` ile tekliften onceki trickle tamamen kayboluyordu. */
-        if (p == null || p.remoteDescription == null) {
+        val p = pc
+        if (p == null) {
             synchronized(pendingRemoteIces) {
                 if (pendingRemoteIces.size < 200) pendingRemoteIces.add(ice)
                 pendingRemoteCount = pendingRemoteIces.size
             }
             return
         }
-        runCatching { p.addIceCandidate(ice) }
-            .onSuccess { remoteCandidateCount++ }
-            .onFailure { lastDiag = "addIceCandidate hatasi: ${it.message}" }
+        RtcEngine.post {
+            val conn = pc
+            if (conn == null || conn.remoteDescription == null) {
+                synchronized(pendingRemoteIces) {
+                    if (pendingRemoteIces.size < 200) pendingRemoteIces.add(ice)
+                    pendingRemoteCount = pendingRemoteIces.size
+                }
+                return@post
+            }
+            runCatching { conn.addIceCandidate(ice) }
+                .onSuccess { remoteCandidateCount++ }
+                .onFailure { lastDiag = "addIceCandidate hatasi: ${it.message}" }
+        }
     }
 
+    /** RTC thread'de cagrilmali. */
     private fun flushRemoteIces() {
         val q = synchronized(pendingRemoteIces) {
             if (pc?.remoteDescription == null || pendingRemoteIces.isEmpty()) return
@@ -410,10 +438,11 @@ class PeerBridge(
             override fun onStateChange() {
                 channelState = ch.state()?.name?.lowercase() ?: "unknown"
                 when (ch.state()) {
-                    DataChannel.State.OPEN -> maybeSendHello(ch)
-                    DataChannel.State.CLOSED -> if (!closed) {
-                        closed = true
-                        listener?.onState("closed")
+                    DataChannel.State.OPEN -> RtcEngine.post { maybeSendHello(ch) }
+                    /* Eski hata: closed=true yapip dispose ATLAMAK — sonraki
+                       PeerConnection native crash uretiyordu. Tam close(). */
+                    DataChannel.State.CLOSED -> if (!closed && !disposed) {
+                        close("channel-closed")
                     }
                     else -> Unit
                 }
@@ -462,29 +491,32 @@ class PeerBridge(
     }
 
     /**
-     * OPEN gorunup `send()` false dondugunde (canli olcum: kanal=OPEN,
-     * hello GÖNDERİLMEDİ) HELLO'yu periyodik yeniden dener.
+     * OPEN gorunup `send()` false dondugunde HELLO'yu periyodik yeniden dener.
+     * KRITIK: DataChannel.send YALNIZCA RtcEngine thread'inde — baska thread'den
+     * native cagri sureci dusuruyordu (uygulama ani kapanma).
      */
     private fun startHelloPump(ch: DataChannel) {
         if (helloPumpStarted || closed) return
         helloPumpStarted = true
-        scope.launch(Dispatchers.Default) {
+        scope.launch(RtcEngine.dispatcher) {
             var attempt = 0
             while (!closed && !helloSent && attempt < 40) {
-                delay(200)
+                delay(250)
                 if (closed || helloSent) break
-                if (ch.state() != DataChannel.State.OPEN) {
-                    attempt++
+                attempt++
+                val state = runCatching { ch.state() }.getOrNull()
+                if (state != DataChannel.State.OPEN) {
+                    lastDiag = "HELLO bekliyor (kanal=$state, deneme=$attempt)"
                     continue
                 }
-                attempt++
                 if (sendHello()) {
                     helloSent = true
                     lastDiag = "HELLO gönderildi (deneme=$attempt)"
                     Log.i(TAG, lastDiag)
+                    CrashLog.breadcrumb(lastDiag)
                     break
                 }
-                lastDiag = "HELLO gönderilemedi (kanal=${ch.state()}, deneme=$attempt)"
+                lastDiag = "HELLO gönderilemedi (kanal=$state, deneme=$attempt)"
             }
         }
     }
@@ -502,47 +534,69 @@ class PeerBridge(
     private fun onEnvelope(env: WireEnvelope) {
         when (env.type) {
             WireEnvelope.HELLO -> {
+                /* Windows HELLO'yu birden fazla kez yeniden gonderebilir — ikinci
+                   kez onReady/UI cagrisi yapma (Compose yeniden olusum / crash). */
+                if (helloReceived || peerReady) return
                 if (env.sid != sessionId) {
-                    /* Bildirim kisa surede kayboluyor; tani satirina da yazilir
-                       ki tek bir ekran goruntusu neden baglanilmadigini soylesin. */
                     lastDiag = "HELLO sid uyuşmadı (beklenen=$sessionId gelen=${env.sid})"
-                    listener?.onError("Oturum kimliği uyuşmuyor")
-                    close(); return
+                    CrashLog.breadcrumb(lastDiag)
+                    notifyListener { onError("Oturum kimliği uyuşmuyor") }
+                    /* soft: once UI, sonra teardown — send/dispose yarisi azaltilir */
+                    scope.launch {
+                        delay(50)
+                        close("hello-sid")
+                    }
+                    return
                 }
                 val localHash = Primitives.sha256Hex(password)
                 if (env.hash != localHash) {
                     lastDiag = "HELLO şifre uyuşmadı (beklenen=${localHash.take(12)}… gelen=${env.hash?.take(12) ?: "boş"}…)"
-                    listener?.onError("Oturum şifresi uyuşmuyor")
-                    close(); return
+                    CrashLog.breadcrumb(lastDiag)
+                    notifyListener { onError("Oturum şifresi uyuşmuyor") }
+                    scope.launch {
+                        delay(50)
+                        close("hello-hash")
+                    }
+                    return
                 }
                 helloReceived = true
                 peerName = env.name.orEmpty().ifEmpty { "Karşı taraf" }
                 peerReady = true
-                listener?.onReady(peerName)
+                CrashLog.breadcrumb("HELLO OK peer=$peerName")
+                /* Kendi HELLO'muz henuz gitmediyse hemen dene (Windows ready bekler). */
+                channel?.let { maybeSendHello(it) }
+                notifyListener { onReady(peerName) }
             }
 
-            WireEnvelope.TEXT ->
-                listener?.onText(env.text.orEmpty(), env.ts ?: System.currentTimeMillis())
+            WireEnvelope.TEXT -> {
+                val text = env.text.orEmpty()
+                val ts = env.ts ?: System.currentTimeMillis()
+                notifyListener { onText(text, ts) }
+            }
 
             WireEnvelope.SDP -> handleSdp(env)
 
             WireEnvelope.ICE -> addRemoteCandidate(env.mid, env.mline, env.cand)
 
-            WireEnvelope.VIDEO_STOP -> listener?.onVideoStopped()
+            WireEnvelope.VIDEO_STOP -> notifyListener { onVideoStopped() }
 
-            WireEnvelope.CTRL_REQ -> listener?.onControlRequest()
-            WireEnvelope.CTRL_OK -> listener?.onControlGranted()
-            WireEnvelope.CTRL_DENY -> listener?.onControlDenied()
-            WireEnvelope.CTRL_STOP -> listener?.onControlStopped()
+            WireEnvelope.CTRL_REQ -> notifyListener { onControlRequest() }
+            WireEnvelope.CTRL_OK -> notifyListener { onControlGranted() }
+            WireEnvelope.CTRL_DENY -> notifyListener { onControlDenied() }
+            WireEnvelope.CTRL_STOP -> notifyListener { onControlStopped() }
 
-            WireEnvelope.CTRL -> env.ev?.let { listener?.onControl(it) }
+            WireEnvelope.CTRL -> env.ev?.let { ev -> notifyListener { onControl(ev) } }
 
-            WireEnvelope.CLIP -> listener?.onClipboard(env.text.orEmpty())
+            WireEnvelope.CLIP -> notifyListener { onClipboard(env.text.orEmpty()) }
 
-            WireEnvelope.MIC -> listener?.onMicToggle(env.enabled == true)
+            WireEnvelope.MIC -> {
+                val en = env.enabled == true
+                notifyListener { onMicToggle(en) }
+            }
 
             WireEnvelope.BYE -> {
-                listener?.onBye(env.reason.orEmpty())
+                val reason = env.reason.orEmpty()
+                notifyListener { onBye(reason) }
                 close()
             }
 
@@ -557,7 +611,7 @@ class PeerBridge(
         val p = pc ?: return
         val type = env.sdpType ?: return
         val sdp = env.sdp ?: return
-        scope.launch(Dispatchers.Default) {
+        scope.launch(RtcEngine.dispatcher) {
             runCatching {
                 when (type) {
                     "offer" -> {
@@ -574,7 +628,7 @@ class PeerBridge(
                         flushRemoteIces()
                     }
                 }
-            }.onFailure { listener?.onError(it.message ?: "SDP hatası") }
+            }.onFailure { notifyListener { onError(it.message ?: "SDP hatası") } }
         }
     }
 
@@ -582,15 +636,17 @@ class PeerBridge(
     fun negotiate() {
         val p = pc ?: return
         val ch = channel ?: return
-        if (ch.state() != DataChannel.State.OPEN || makingOffer || closed) return
+        if (runCatching { ch.state() }.getOrNull() != DataChannel.State.OPEN || makingOffer || closed) return
         makingOffer = true
-        scope.launch(Dispatchers.Default) {
+        scope.launch(RtcEngine.dispatcher) {
             runCatching {
                 val offer = createOfferSdp(p)
                 setLocalSdp(p, SessionDescription(SessionDescription.Type.OFFER, offer.description))
                 waitGathering()
                 send(WireEnvelope(type = WireEnvelope.SDP, sdpType = "offer", sdp = p.localDescription?.description))
-            }.onFailure { listener?.onError(it.message ?: "Pazarlık hatası") }
+            }.onFailure { e ->
+                notifyListener { onError(e.message ?: "Pazarlık hatası") }
+            }
             makingOffer = false
         }
     }
@@ -604,43 +660,71 @@ class PeerBridge(
         return true
     }
 
+    /** Listener cagrilarini ana thread'e tasir (Compose / UI guvenligi). */
+    private fun notifyListener(block: Listener.() -> Unit) {
+        val l = listener ?: return
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            runCatching { l.block() }
+        } else {
+            mainHandler.post { runCatching { l.block() } }
+        }
+    }
+
     /**
      * Wire zarfini DataChannel'a yazar.
      *
-     * KRITIK: Electron (Chromium) ↔ Android native WebRTC arasinda metin
-     * karesi (`binary=false`) bazi surumlerde `send()` false doner veya
-     * karsi tarafa hic ulasmaz. Canli olcum: kanal=OPEN iken HELLO
-     * gonderilemiyordu. JSON zarflar binary UTF-8 kare olarak gider;
-     * alici tarafta WireMessageCodec / coerceWireText zaten JSON'u ayirir.
+     * - HELLO/SDP: once binary (Electron↔Android uyumu).
+     * - ctrl / ctrl-req / clip / text: once METIN karesi — Windows `engine.js`
+     *   `channel.send(string)` ile ayni; bazi Chromium yollarinda binary ctrl
+     *   dosya parcasi sanilip dusebiliyordu.
+     * - Native send her zaman RtcEngine thread'inde.
      */
     private fun send(env: WireEnvelope): Boolean {
-        val ch = channel ?: return false
-        if (ch.state() != DataChannel.State.OPEN) return false
         val bytes = gson.toJson(env).toByteArray(Charsets.UTF_8)
-        return trySendBytes(ch, bytes, asBinary = true)
-            || trySendBytes(ch, bytes, asBinary = false)
+        val preferText = when (env.type) {
+            WireEnvelope.CTRL, WireEnvelope.CTRL_REQ, WireEnvelope.CTRL_OK,
+            WireEnvelope.CTRL_DENY, WireEnvelope.CTRL_STOP,
+            WireEnvelope.TEXT, WireEnvelope.CLIP, WireEnvelope.MIC -> true
+            else -> false
+        }
+        return doSendBytes(bytes, preferBinary = !preferText)
     }
 
-    private fun trySendBytes(ch: DataChannel, bytes: ByteArray, asBinary: Boolean): Boolean {
+    private fun sendBinary(bytes: ByteArray): Boolean = doSendBytes(bytes, preferBinary = true)
+
+    private fun doSendBytes(bytes: ByteArray, preferBinary: Boolean): Boolean {
+        if (channel == null || closed) return false
         return try {
-            val direct = ByteBuffer.allocateDirect(bytes.size)
-            direct.put(bytes)
-            direct.flip()
-            val ok = ch.send(DataChannel.Buffer(direct, asBinary))
-            if (!ok) {
-                Log.w(TAG, "DataChannel.send false (binary=$asBinary, n=${bytes.size})")
+            RtcEngine.runOnRtcBlocking(8) {
+                val ch = channel ?: return@runOnRtcBlocking false
+                synchronized(sendLock) {
+                    if (closed) return@synchronized false
+                    val state = runCatching { ch.state() }.getOrNull() ?: return@synchronized false
+                    if (state != DataChannel.State.OPEN) return@synchronized false
+                    val order = if (preferBinary) listOf(true, false) else listOf(false, true)
+                    for (asBinary in order) {
+                        if (trySendBytes(ch, bytes, asBinary)) return@synchronized true
+                    }
+                    false
+                }
             }
-            ok
-        } catch (e: Exception) {
-            Log.w(TAG, "Gonderim hatasi (binary=$asBinary): ${e.message}")
+        } catch (t: Throwable) {
+            CrashLog.write("doSendBytes: ${t.message}")
             false
         }
     }
 
-    private fun sendBinary(bytes: ByteArray): Boolean {
-        val ch = channel ?: return false
-        if (ch.state() != DataChannel.State.OPEN) return false
-        return trySendBytes(ch, bytes, asBinary = true)
+    private fun trySendBytes(ch: DataChannel, bytes: ByteArray, asBinary: Boolean): Boolean {
+        return try {
+            val buf = ByteBuffer.wrap(bytes.copyOf())
+            val ok = ch.send(DataChannel.Buffer(buf, asBinary))
+            if (!ok) Log.w(TAG, "DataChannel.send false (binary=$asBinary, n=${bytes.size})")
+            ok
+        } catch (t: Throwable) {
+            Log.e(TAG, "Gonderim hatasi (binary=$asBinary): ${t.message}", t)
+            CrashLog.write("trySendBytes: ${t.message}")
+            false
+        }
     }
 
     // ---------------- dis API ----------------
@@ -675,7 +759,7 @@ class PeerBridge(
     // ---------------- medya ----------------
 
     fun newSurfaceTextureHelper(): SurfaceTextureHelper =
-        SurfaceTextureHelper.create("CaptureThread", eglBase.eglBaseContext)
+        SurfaceTextureHelper.create("CaptureThread", eglBase().eglBaseContext)
 
     /**
      * Android ekran paylasimini (MediaProjection) ekler.
@@ -692,23 +776,27 @@ class PeerBridge(
         width: Int = 1280,
         height: Int = 720
     ) {
-        val p = pc ?: return
-        val f = ensureFactory()
-        videoSource.setIsScreencast(true)
-        helper.setTextureSize(width, height)
-        val track = f.createVideoTrack("makay-screen", videoSource)
-        localVideoTrack = track
-        p.addTrack(track, listOf(STREAM_ID))
-        negotiate()
+        RtcEngine.post {
+            val p = pc ?: return@post
+            val f = ensureFactory()
+            videoSource.setIsScreencast(true)
+            helper.setTextureSize(width, height)
+            val track = f.createVideoTrack("makay-screen", videoSource)
+            localVideoTrack = track
+            p.addTrack(track, listOf(STREAM_ID))
+            negotiate()
+        }
     }
 
     /** Mikrofon akisini ekler. */
     fun addMicrophoneTrack(audioSource: AudioSource) {
-        val p = pc ?: return
-        val track = ensureFactory().createAudioTrack("makay-mic", audioSource)
-        localAudioTrack = track
-        p.addTrack(track, listOf(STREAM_ID))
-        negotiate()
+        RtcEngine.post {
+            val p = pc ?: return@post
+            val track = ensureFactory().createAudioTrack("makay-mic", audioSource)
+            localAudioTrack = track
+            p.addTrack(track, listOf(STREAM_ID))
+            negotiate()
+        }
     }
 
     /** Mikrofon track'i zaten kurulu mu? (ilk acilista olusturulur) */
@@ -731,11 +819,13 @@ class PeerBridge(
     }
 
     fun removeVideoTrack() {
-        val p = pc ?: return
-        p.senders.filter {
-            it.track()?.kind() == MediaStreamTrack.VIDEO_TRACK_KIND
-        }.forEach { runCatching { p.removeTrack(it) } }
-        negotiate()
+        RtcEngine.post {
+            val p = pc ?: return@post
+            p.senders.filter {
+                it.track()?.kind() == MediaStreamTrack.VIDEO_TRACK_KIND
+            }.forEach { runCatching { p.removeTrack(it) } }
+            negotiate()
+        }
     }
 
     fun stopVideoShare() {
@@ -749,31 +839,41 @@ class PeerBridge(
         ensureFactory().createAudioSource(MediaConstraints())
 
     fun close(reason: String = "") {
-        if (closed) return
+        if (disposed) return
         closed = true
+        setupGen++
         helloPumpStarted = false
-        runCatching {
-            val ch = channel
-            if (ch != null && ch.state() == DataChannel.State.OPEN) {
-                val bytes = gson.toJson(WireEnvelope(type = WireEnvelope.BYE, reason = reason))
-                    .toByteArray(Charsets.UTF_8)
-                trySendBytes(ch, bytes, asBinary = true)
+        CrashLog.breadcrumb("close reason=$reason")
+        RtcEngine.post {
+            if (disposed) return@post
+            disposed = true
+            runCatching {
+                val ch = channel
+                if (ch != null && ch.state() == DataChannel.State.OPEN) {
+                    val bytes = gson.toJson(WireEnvelope(type = WireEnvelope.BYE, reason = reason))
+                        .toByteArray(Charsets.UTF_8)
+                    trySendBytes(ch, bytes, asBinary = true)
+                }
             }
+            runCatching { channel?.unregisterObserver() }
+            runCatching { channel?.close() }
+            runCatching { localVideoTrack?.dispose() }
+            runCatching { localAudioTrack?.dispose() }
+            localVideoTrack = null
+            localAudioTrack = null
+            runCatching { pc?.close() }
+            runCatching { pc?.dispose() }
+            /* RtcEngine (factory/egl/audio) SUREC BOYU yasatir — dispose ETME. */
+            channel = null
+            pc = null
+            notifyListener { onState("closed") }
         }
-        runCatching { channel?.close() }
-        runCatching { pc?.close() }
-        runCatching { pc?.dispose() }
-        runCatching { factory?.dispose() }
-        runCatching { audioDeviceModule?.release() }
-        runCatching { eglBase.release() }
-        channel = null
-        pc = null
-        factory = null
-        listener?.onState("closed")
     }
 
-    /** Ekranda gosterilecek uzak video renderer icin EglBase. */
-    fun eglContext(): EglBase.Context = eglBase.eglBaseContext
+    /** Ekranda gosterilecek uzak video renderer icin EglBase (paylasilan). */
+    fun eglContext(): EglBase.Context? =
+        if (closed) null
+        else runCatching { eglBase().eglBaseContext }.getOrNull()
 
     companion object {
         private const val TAG = "MakayPeer"
@@ -784,8 +884,11 @@ class PeerBridge(
 
 // ---------------- SDP suspend yardimcilari ----------------
 
-private fun mc(vararg pairs: Pair<String, String>): MediaConstraints =
-    MediaConstraints().apply { pairs.forEach { (k, v) -> mandatory.add(MediaConstraints.KeyValuePair(k, v)) } }
+/**
+ * Unified Plan'da OfferToReceive* (Plan B) bazi libwebrtc surumlerinde
+ * native crash / bos m-line uretiyordu — bos constraints kullan.
+ */
+private val emptyMc = MediaConstraints()
 
 private suspend fun createOfferSdp(p: PeerConnection): SessionDescription =
     suspendCancellableCoroutine { cont ->
@@ -798,7 +901,7 @@ private suspend fun createOfferSdp(p: PeerConnection): SessionDescription =
             override fun onSetFailure(e: String?) {
                 if (cont.isActive) cont.resumeWith(Result.failure(IllegalStateException(e ?: "Offer hatası")))
             }
-        }, mc("OfferToReceiveAudio" to "true", "OfferToReceiveVideo" to "true"))
+        }, emptyMc)
     }
 
 private suspend fun createAnswerSdp(p: PeerConnection): SessionDescription =
@@ -812,7 +915,7 @@ private suspend fun createAnswerSdp(p: PeerConnection): SessionDescription =
             override fun onSetFailure(e: String?) {
                 if (cont.isActive) cont.resumeWith(Result.failure(IllegalStateException(e ?: "Answer hatası")))
             }
-        }, mc("OfferToReceiveAudio" to "true", "OfferToReceiveVideo" to "true"))
+        }, emptyMc)
     }
 
 private suspend fun setLocalSdp(p: PeerConnection, sdp: SessionDescription) =

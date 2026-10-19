@@ -62,8 +62,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            /* 1.0.33: R8 minify gecici kapali — native JNI strip / allow-sonrasi
+               ani kapanma A/B. Sonraki surumde minify + guclendirilmis keep ile acilacak. */
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -248,6 +250,7 @@ afterEvaluate {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.fragment:fragment-ktx:1.8.5")

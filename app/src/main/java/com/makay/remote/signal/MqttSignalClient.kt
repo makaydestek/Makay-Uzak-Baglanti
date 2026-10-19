@@ -64,6 +64,32 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
         }
     }
 
+    private val closeCheckLock = Any()
+    private var closeCheckPending = false
+
+    private fun scheduleCloseCheck() {
+        synchronized(closeCheckLock) {
+            if (closeCheckPending || closed.get()) return
+            closeCheckPending = true
+        }
+        Thread {
+            try {
+                Thread.sleep(CLOSE_DEBOUNCE_MS)
+            } catch (_: InterruptedException) {
+                return@Thread
+            }
+            synchronized(closeCheckLock) { closeCheckPending = false }
+            if (closed.get()) return@Thread
+            val alive = clients.any { runCatching { it.isConnected }.getOrDefault(false) }
+            if (!alive) {
+                Log.w(TAG, "Tum broker'lar dustu — onClosed")
+                closeListener?.onClosed()
+            } else {
+                Log.i(TAG, "En az bir broker ayakta — onClosed atlandi")
+            }
+        }.also { it.isDaemon = true; it.start() }
+    }
+
     /**
      * Odaya abone olur. Broker'a baglanir ve konuya yazilir.
      *
@@ -195,9 +221,11 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
 
             override fun disconnected(response: MqttDisconnectResponse?) {
                 Log.w(TAG, "Broker baglantisi koptu: ${response?.reasonString}")
-                if (!closed.get() && clients.none { it.isConnected }) {
-                    closeListener?.onClosed()
-                }
+                /* Halka acik broker'lar sikca kisa dusup kalkar. Aninda
+                   onClosed → SessionController tam join reset → Windows'ta
+                   İzin Ver hic gorunmez, telefonda "tekrarlanıyor" olur.
+                   Windows köprüsü gibi birkaç sn bekle; biri ayaktaysa sus. */
+                scheduleCloseCheck()
             }
 
             override fun mqttErrorOccurred(exception: MqttException?) {
@@ -311,6 +339,8 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        closeListener = null
+        listener = null
         clients.forEach {
             runCatching { if (it.isConnected) it.disconnectForcibly(200L, 200L, false) }
             runCatching { it.close() }
@@ -323,6 +353,7 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
         private const val QOS = 1
         private const val CONNECT_TIMEOUT_MS = 15_000L
         private const val PUBLISH_TIMEOUT_MS = 8_000L
+        private const val CLOSE_DEBOUNCE_MS = 5_000L
 
         /**
          * MQTT-5 ile calisan halka acik broker'lar (WSS).

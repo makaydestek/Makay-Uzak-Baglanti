@@ -36,6 +36,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import com.makay.remote.rtc.CrashLog
 import org.webrtc.AudioTrack
 import org.webrtc.EglBase
 import org.webrtc.VideoTrack
@@ -89,7 +92,10 @@ class SessionController(
         data class Joining(val room: String, val password: String) : State()
 
         /** Karsi taraftan join-request geldi, kullanicinin onayi bekleniyor. */
-        data class AwaitingApproval(val requesterName: String) : State()
+        data class AwaitingApproval(
+            val requesterName: String,
+            val deviceId: String = ""
+        ) : State()
 
         /** offer/answer takasi + ICE kuruluyor. */
         data class Connecting(val asHost: Boolean) : State()
@@ -165,6 +171,10 @@ class SessionController(
     private val _speakerOn = MutableStateFlow(true)
     val speakerOn: StateFlow<Boolean> = _speakerOn.asStateFlow()
 
+    /** Dosya aktarim ilerlemesi (giden/gelen). */
+    private val _fileProgress = MutableStateFlow<FileTransferEngine.Progress?>(null)
+    val fileProgress: StateFlow<FileTransferEngine.Progress?> = _fileProgress.asStateFlow()
+
     // ---------------- ic durum ----------------
 
     private val gson = WireJson.gson
@@ -174,12 +184,24 @@ class SessionController(
     private var peer: PeerBridge? = null
     private var joinRetryJob: Job? = null
     private var connectTimeoutJob: Job? = null
+    private var acceptOfferJob: Job? = null
+    private var reconnectJob: Job? = null
+    private var softResubJob: Job? = null
+    /** MQTT fan-out callback'lerini tek siraya al (offer + bye yarisi). */
+    private val signalMutex = Mutex()
 
     private var asHost = false
     private var room: String = ""
     private var password: String = ""
     private var lastJoinRequestAt = 0L
     private var intentionalClose = false
+
+    /* Yeniden baglanma / otomatik TURN */
+    private var reconnectInvite: String = ""
+    private var reconnectPassword: String = ""
+    private var reconnectAttempts = 0
+    private var autoTurnTried = false
+    private var connectedOnce = false
 
     /**
      * TEKLIFTEN ONCE GELEN UZAK ICE ADAYLARI tamponu — bkz. [IceInbox].
@@ -217,7 +239,7 @@ class SessionController(
         try {
             client.subscribe(
                 code, pwd,
-                SignalChannel.Listener { onSignal(it) },
+                SignalChannel.Listener { enqueueSignal(it) },
                 SignalChannel.CloseListener { onSignalClosed() }
             )
         } catch (e: Exception) {
@@ -227,23 +249,32 @@ class SessionController(
             return ""
         }
 
-        settings.lastRoom = code
-        settings.lastPassword = pwd
         _state.value = State.Hosting(code, pwd, invite)
         return code
     }
 
-    /** Kullanici bir join-request'i onayladiginda cagrilir. */
-    fun allowJoin() {
-        if (!asHost || _state.value !is State.AwaitingApproval) return
+    /**
+     * Kullanici bir join-request'i onayladiginda cagrilir.
+     * @param trustDevice true ise bu cihaz sonraki baglantilarda otomatik izin alir.
+     */
+    fun allowJoin(trustDevice: Boolean = false) {
+        val awaiting = _state.value as? State.AwaitingApproval ?: return
+        if (!asHost) return
         val existing = peer
         if (existing != null) {
             emitToast("Bağlantı zaten kuruluyor — bekleyin", "info")
             return
         }
+        if (trustDevice && awaiting.deviceId.isNotBlank()) {
+            settings.trustDevice(awaiting.deviceId, awaiting.requesterName)
+            emitToast("«${awaiting.requesterName}» güvenli cihaz olarak kaydedildi", "success")
+        }
+        startOfferAsHost()
+    }
+
+    private fun startOfferAsHost() {
         _state.value = State.Connecting(asHost = true)
         startConnectTimeout()
-
         val p = createPeer(PeerBridge.Role.OFFERER)
         scope.launch(Dispatchers.Default) {
             try {
@@ -312,7 +343,7 @@ class SessionController(
             try {
                 http.subscribe(
                     code, pwd,
-                    SignalChannel.Listener { onSignal(it) },
+                    SignalChannel.Listener { enqueueSignal(it) },
                     SignalChannel.CloseListener { onSignalClosed() }
                 )
                 signal = http
@@ -329,7 +360,7 @@ class SessionController(
             try {
                 client.subscribe(
                     code, pwd,
-                    SignalChannel.Listener { onSignal(it) },
+                    SignalChannel.Listener { enqueueSignal(it) },
                     SignalChannel.CloseListener { onSignalClosed() }
                 )
                 signal = client
@@ -341,8 +372,16 @@ class SessionController(
             }
         }
 
-        settings.lastRoom = code
-        settings.lastPassword = pwd
+        /* Windows oturum kimligi her seferinde yeni — geçmişe kaydetme */
+        settings.clearRecents()
+        settings.clearSession()
+        reconnectInvite = if (parsed.signalUrl.isNotEmpty())
+            "Kimlik: $code\nŞifre: $pwd\nSinyal: ${parsed.signalUrl}"
+        else code
+        reconnectPassword = pwd
+        reconnectAttempts = 0
+        autoTurnTried = false
+        connectedOnce = false
         startJoinRetries()
     }
 
@@ -352,28 +391,38 @@ class SessionController(
         joinRetryJob = scope.launch {
             /* Broker aboneliginin yerlesmesi icin kisa bekleme — bazi halka
                acik MQTT'lerde hemen yayinlanan ilk join-request kaybolabiliyor. */
-            delay(400)
+            /* Broker aboneligi + karsi taraf dinlemeye hazir olsun */
+            delay(900)
             var sent = 0
             var failures = 0
             while (isActive) {
                 val st = _state.value
                 if (st !is State.Joining) break
                 if (peer != null) break
+                val ch = signal
+                if (ch == null) {
+                    failures++
+                    _joinHint.value = "Eşleşme ağı hazır değil…"
+                    delay(JOIN_RETRY_MS)
+                    continue
+                }
                 val ok = runCatching {
-                    signal?.publish(
+                    ch.publish(
                         SignalEnvelope(
                             type = SignalEnvelope.TYPE_JOIN_REQUEST,
-                            name = settings.deviceName.ifBlank { "Android" }
+                            name = settings.deviceName.ifBlank { "Android" },
+                            deviceId = settings.deviceId
                         )
                     )
                 }.isSuccess
                 if (ok) {
                     sent++
                     failures = 0
+                    Log.i(TAG, "join-request yayinlandi #$sent room=$room")
                     _joinHint.value = when {
                         sent == 1 -> "Onay isteği gönderildi — Windows’ta «İzin Ver» bekleniyor"
-                        sent < 8 -> "Onay isteği yeniden gönderildi ($sent)"
-                        else -> "Hâlâ yanıt yok — Windows’ta Bağlantıya Aç açık mı? Şifre doğru mu?"
+                        sent < 8 -> "Onay isteği yeniden gönderildi ($sent) — Windows’ta pencereyi kontrol edin"
+                        else -> "Hâlâ yanıt yok — Windows’ta Bağlantıya Aç açık mı? Kimlik/şifre aynı mı?"
                     }
                 } else {
                     failures++
@@ -390,6 +439,12 @@ class SessionController(
 
     // ---------------- sinyal isleme ----------------
 
+    private fun enqueueSignal(env: SignalEnvelope) {
+        scope.launch {
+            signalMutex.withLock { onSignal(env) }
+        }
+    }
+
     private fun onSignal(env: SignalEnvelope) {
         when (env.type) {
             SignalEnvelope.TYPE_JOIN_REQUEST -> {
@@ -400,9 +455,17 @@ class SessionController(
                 if (now - lastJoinRequestAt < JOIN_THROTTLE_MS) return
                 lastJoinRequestAt = now
                 val st = _state.value
-                if (st is State.Hosting || st is State.AwaitingApproval) {
-                    _state.value = State.AwaitingApproval(env.name ?: "Bilgisayar")
+                if (st !is State.Hosting && st !is State.AwaitingApproval) return
+                val name = env.name ?: "Bilgisayar"
+                val did = env.deviceId.orEmpty()
+                /* Guvenli cihaz: İzin Ver olmadan dogrudan offer */
+                if (did.isNotEmpty() && settings.isTrusted(did)) {
+                    emitToast("Güvenli cihaz «$name» — otomatik bağlanıyor", "success")
+                    _state.value = State.AwaitingApproval(name, did)
+                    startOfferAsHost()
+                    return
                 }
+                _state.value = State.AwaitingApproval(name, did)
             }
 
             SignalEnvelope.TYPE_JOIN_DENIED -> {
@@ -417,6 +480,7 @@ class SessionController(
                 if (peer != null) return
                 val code = env.code ?: return
                 joinRetryJob?.cancel()
+                acceptOfferJob?.cancel()
                 _joinHint.value = ""
                 clearConnectTimeout()
                 _state.value = State.Connecting(asHost = false)
@@ -427,15 +491,20 @@ class SessionController(
                    (pc henuz yokken de saklanir). acceptOffer setRemoteSdp
                    sonrasinda flushRemoteIces() uygular. */
                 flushPendingIce(p)
-                scope.launch(Dispatchers.Default) {
+                CrashLog.breadcrumb("OFFER alindi, acceptOffer basliyor")
+                acceptOfferJob = scope.launch {
                     try {
                         val answerCode = p.acceptOffer(code)
-                        /* acceptOffer sirasinda gelen ek ICE'ler IceInbox'ta
-                           kalmis olabilir — peer artik var, hemen uygula. */
                         flushPendingIce(p)
                         signal?.publish(SignalEnvelope(type = SignalEnvelope.TYPE_ANSWER, code = answerCode))
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Offer islenemedi: ${e.message}")
+                        CrashLog.breadcrumb("ANSWER yayinlandi")
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "Offer islenemedi", e)
+                        CrashLog.write("acceptOffer: ${e.stackTraceToString()}")
+                        if (peer === p) {
+                            runCatching { p.close("offer-fail") }
+                            peer = null
+                        }
                         _state.value = State.Failed("Bağlantı teklifi işlenemedi: ${e.message}")
                     }
                 }
@@ -474,8 +543,106 @@ class SessionController(
         if (intentionalClose) return
         val st = _state.value
         if (st is State.Idle || st is State.Failed) return
-        Log.w(TAG, "Eslesme agi koptu")
-        emitToast("Eşleşme ağı koptu — yeniden bağlanın", "warning")
+        Log.w(TAG, "Eslesme agi koptu (state=$st, connectedOnce=$connectedOnce)")
+        /* Onay / eslesme asamasinda tam join reset YAPMA — Windows'ta İzin Ver
+           kaybolur, telefonda surekli "tekrarlanıyor" olur. Yalnizca MQTT'yi
+           ayni odaya yumusak yenile. */
+        if (!connectedOnce && (
+                st is State.Joining ||
+                    st is State.Connecting ||
+                    st is State.Hosting ||
+                    st is State.AwaitingApproval
+                )
+        ) {
+            softResubscribeSignal()
+            return
+        }
+        scheduleReconnect("Eşleşme ağı koptu")
+    }
+
+    /** MQTT'yi ayni oda/sifre ile yeniden kur; peer/state sifirlanmaz. */
+    private fun softResubscribeSignal() {
+        if (softResubJob?.isActive == true) return
+        val code = room
+        val pwd = password
+        if (code.isEmpty() || pwd.isEmpty()) return
+        softResubJob = scope.launch {
+            _joinHint.value = "Eşleşme ağı yenileniyor…"
+            runCatching { signal?.close() }
+            signal = null
+            delay(800)
+            if (intentionalClose) return@launch
+            val st = _state.value
+            if (st is State.Idle || st is State.Failed) return@launch
+            try {
+                val client = MqttSignalClient(settings.mqttBroker.ifEmpty { null })
+                client.subscribe(
+                    code, pwd,
+                    SignalChannel.Listener { enqueueSignal(it) },
+                    SignalChannel.CloseListener { onSignalClosed() }
+                )
+                signal = client
+                Log.i(TAG, "MQTT yumusak yenilendi")
+                if (st is State.Joining) {
+                    startJoinRetries()
+                }
+                _joinHint.value = "Onay isteği yeniden gönderiliyor…"
+            } catch (e: Exception) {
+                Log.w(TAG, "MQTT yenilenemedi: ${e.message}")
+                _joinHint.value = "Eşleşme ağı yok — interneti kontrol edin"
+                emitToast("Eşleşme ağına ulaşılamadı", "warning")
+            }
+        }
+    }
+
+    /**
+     * Beklenmeyen kopmada (MQTT / peer) otomatik yeniden baglanmayi dener.
+     * Yalnizca bir kez baglandiktan sonra (connectedOnce) kullanilir.
+     */
+    private fun scheduleReconnect(reason: String) {
+        if (intentionalClose) return
+        if (reconnectJob?.isActive == true) return
+        if (reconnectAttempts >= MAX_RECONNECT) {
+            emitToast("$reason — yeniden bağlanılamadı", "error")
+            _state.value = State.Failed("$reason. Lütfen tekrar bağlanın.")
+            return
+        }
+        reconnectAttempts++
+        val attempt = reconnectAttempts
+        val wasHost = asHost
+        val code = room
+        val pwd = password
+        val invite = reconnectInvite.ifEmpty { code }
+        reconnectJob = scope.launch {
+            emitToast("$reason — yeniden deneniyor ($attempt/$MAX_RECONNECT)…", "warning")
+            delay(1500L * attempt)
+            if (intentionalClose) return@launch
+            runCatching { peer?.close("reconnect") }
+            peer = null
+            com.makay.remote.rtc.PeerRegistry.current = null
+            if (wasHost && code.isNotEmpty() && pwd.isNotEmpty()) {
+                if (signal == null) {
+                    runCatching {
+                        val client = MqttSignalClient(settings.mqttBroker.ifEmpty { null })
+                        client.subscribe(
+                            code, pwd,
+                            SignalChannel.Listener { enqueueSignal(it) },
+                            SignalChannel.CloseListener { onSignalClosed() }
+                        )
+                        signal = client
+                    }
+                }
+                asHost = true
+                room = code
+                password = pwd
+                _state.value = State.Hosting(code, pwd, Primitives.buildInviteText(code, pwd))
+                emitToast("Oda yeniden açıldı — bağlantı bekleniyor", "info")
+            } else if (!wasHost && invite.isNotEmpty() && pwd.isNotEmpty()) {
+                join(invite, pwd)
+            } else {
+                _state.value = State.Failed("$reason")
+            }
+        }
     }
 
     // ---------------- WebRTC koprusu ----------------
@@ -540,15 +707,38 @@ class SessionController(
     private val peerListener = object : PeerBridge.Listener {
         override fun onState(state: String) {
             if (state == "closed" && !intentionalClose) {
-                reset(keepSignal = true)
+                if (connectedOnce) {
+                    scheduleReconnect("Bağlantı koptu")
+                } else {
+                    reset(keepSignal = true)
+                }
             }
         }
 
         override fun onReady(peerName: String) {
-            clearConnectTimeout()
+            clearConnectTimeout(stopDiag = false)
             joinRetryJob?.cancel()
-            _controlState.value = ControlState.NONE
+            reconnectAttempts = 0
+            connectedOnce = true
+            /* Bagli oturumda ICE/debug satiri gosterme — ekrani kaplar */
+            stopDiagSampler()
+            _diagnostics.value = ""
             _state.value = State.Connected(peerName, asHost)
+            /* Katilan (teknisyen): Windows offerer zaten control.sharer=true —
+               onay modalı yok, ctrl-ok gelmez. Kontrolü hemen etkinleştir;
+               ctrl-req Windows'a bildirilir (badge / input-relay zaten acik). */
+            if (!asHost) {
+                val p = peer
+                if (p != null) {
+                    p.requestControl()
+                    _controlState.value = ControlState.GRANTED
+                    emitToast("Kontrol etkin — ekrana dokunarak bilgisayarı yönetin", "success")
+                } else {
+                    _controlState.value = ControlState.NONE
+                }
+            } else {
+                _controlState.value = ControlState.NONE
+            }
         }
 
         override fun onText(text: String, ts: Long) {
@@ -621,7 +811,10 @@ class SessionController(
         }
 
         override fun onBye(reason: String) {
+            /* Karsi taraf bilerek kapatti — otomatik reconnect yapma */
+            intentionalClose = true
             reset(keepSignal = true)
+            intentionalClose = false
             emitToast(if (reason.isEmpty()) "Bağlantı kapatıldı" else "Bağlantı kapatıldı: $reason", "warning")
         }
 
@@ -629,14 +822,18 @@ class SessionController(
             emitToast(message, "error")
         }
 
-        override fun onFileProgress(p: FileTransferEngine.Progress) = Unit
+        override fun onFileProgress(p: FileTransferEngine.Progress) {
+            _fileProgress.value = p
+        }
 
         override fun onFileComplete(file: FileTransferEngine.Received) {
+            _fileProgress.value = null
             val uri = saveToDownloads(file.name, file.mime, file.bytes)
             _events.tryEmit(Event.FileReceived(file.name, uri))
         }
 
         override fun onFileCancel(fid: String) {
+            _fileProgress.value = null
             emitToast("Dosya aktarımı iptal edildi", "warning")
         }
     }
@@ -779,15 +976,85 @@ class SessionController(
         emitToast(if (on) "Hoparlör açık" else "Hoparlör kapalı", "info")
     }
 
+    /** Basarili gonderilen ctrl olay sayisi (UI tani). */
+    private val _ctrlSent = MutableStateFlow(0)
+    val ctrlSent: StateFlow<Int> = _ctrlSent.asStateFlow()
+
     /**
      * Kontrol olayini gonderir. Cikis hizi RemoteGuard ile TEMIZLENIR
      * (tel siniri): gecersiz olay dusurulur, koordinatlar sinirlanir.
      */
     fun sendControl(payload: ControlPayload): Boolean {
         val p = peer ?: return false
-        if (_controlState.value != ControlState.GRANTED) return false
+        if (_controlState.value != ControlState.GRANTED) {
+            /* Otomatik yeniden dene: baglanti hazirsa yetkiyi ac */
+            if (_state.value is State.Connected && !asHost) {
+                p.requestControl()
+                _controlState.value = ControlState.GRANTED
+            } else return false
+        }
         val clean = sanitize(payload) ?: return false
-        return p.sendControl(clean)
+        val ok = p.sendControl(clean)
+        if (ok) _ctrlSent.update { it + 1 }
+        else if (_ctrlSent.value == 0) {
+            emitToast("Kontrol gönderilemedi — kanal kapalı olabilir", "error")
+        }
+        return ok
+    }
+
+    /**
+     * Klavye akoru: or. Ctrl+C → control down, c down, c up, control up.
+     * Dosya kopyala/yapıştır (Explorer) icin.
+     */
+    fun sendKeyChord(vararg keys: String): Boolean {
+        if (keys.isEmpty()) return false
+        var ok = true
+        for (k in keys) {
+            if (!sendControl(ControlPayload(ControlPayload.KEY_DOWN, k = k))) ok = false
+        }
+        for (k in keys.reversed()) {
+            if (!sendControl(ControlPayload(ControlPayload.KEY_UP, k = k))) ok = false
+        }
+        return ok
+    }
+
+    fun sendCopy(): Boolean {
+        val ok = sendKeyChord("control", "c")
+        if (ok) emitToast("Kopyala (Ctrl+C) gönderildi", "success")
+        return ok
+    }
+
+    fun sendPaste(): Boolean {
+        val ok = sendKeyChord("control", "v")
+        if (ok) emitToast("Yapıştır (Ctrl+V) gönderildi", "success")
+        return ok
+    }
+
+    /** Son imlec konumunda sag tik (AnyDesk tarzi — jest degil, dugme). */
+    @Volatile var lastPointerX: Double = 0.5
+        private set
+    @Volatile var lastPointerY: Double = 0.5
+        private set
+
+    fun notePointer(x: Double, y: Double) {
+        lastPointerX = x.coerceIn(0.0, 1.0)
+        lastPointerY = y.coerceIn(0.0, 1.0)
+    }
+
+    fun sendRightClickAtPointer(): Boolean {
+        val x = lastPointerX
+        val y = lastPointerY
+        val a = sendControl(
+            ControlPayload(ControlPayload.MOUSE_MOVE, x = x, y = y)
+        )
+        val b = sendControl(
+            ControlPayload(ControlPayload.MOUSE_DOWN, x = x, y = y, b = "right")
+        )
+        val c = sendControl(
+            ControlPayload(ControlPayload.MOUSE_UP, x = x, y = y, b = "right")
+        )
+        if (b && c) emitToast("Sağ tık gönderildi", "info")
+        return a && b && c
     }
 
     private fun sanitize(p: ControlPayload): ControlPayload? {
@@ -810,15 +1077,34 @@ class SessionController(
     /** Oturumu kapatir (oda dahil). */
     fun disconnect() {
         intentionalClose = true
+        reconnectJob?.cancel()
+        softResubJob?.cancel()
         val hostingRoom = room
         scope.launch {
             if (asHost && hostingRoom.isNotEmpty()) {
                 runCatching { signal?.publish(SignalEnvelope(type = SignalEnvelope.TYPE_BYE)) }
             }
             reset(keepSignal = false)
-            settings.clearSession()
+            if (!settings.rememberPassword) settings.clearSession()
             intentionalClose = false
         }
+    }
+
+    /** Soft keyboard: metni Windows'a tek tek unicode karakter olarak gonderir. */
+    fun typeText(text: String): Boolean {
+        if (text.isEmpty()) return false
+        var ok = true
+        for (ch in text) {
+            val k = ch.toString()
+            if (!sendControl(ControlPayload(ControlPayload.KEY_DOWN, k = k))) ok = false
+            if (!sendControl(ControlPayload(ControlPayload.KEY_UP, k = k))) ok = false
+        }
+        return ok
+    }
+
+    fun cancelFileTransfer(fid: String) {
+        peer?.cancelFileSend(fid)
+        _fileProgress.value = null
     }
 
     /** Hata ekranindan ana ekrana donerken cagrilir. */
@@ -865,8 +1151,19 @@ class SessionController(
     private fun reset(keepSignal: Boolean) {
         joinRetryJob?.cancel()
         joinRetryJob = null
+        acceptOfferJob?.cancel()
+        acceptOfferJob = null
+        softResubJob?.cancel()
+        softResubJob = null
+        reconnectJob?.cancel()
+        reconnectJob = null
         clearConnectTimeout()
+        connectedOnce = false
         _joinHint.value = ""
+        _fileProgress.value = null
+        /* Once UI track'leri kopar, sonra native dispose — SurfaceView yarisi onlenir. */
+        _remoteVideo.value = null
+        _remoteAudio.value = null
         peer?.let { runCatching { it.close("reset") } }
         peer = null
         com.makay.remote.rtc.PeerRegistry.current = null
@@ -884,36 +1181,49 @@ class SessionController(
         _inboundClipboard.value = null
         _peerMicState.value = null
         _micState.value = false
-        _remoteVideo.value = null
-        _remoteAudio.value = null
+        _ctrlSent.value = 0
         if (_state.value !is State.Failed) _state.value = State.Idle
     }
 
     private fun startConnectTimeout() {
-        clearConnectTimeout()
+        clearConnectTimeout(stopDiag = false)
         startDiagSampler()
         connectTimeoutJob = scope.launch {
             delay(CONNECT_TIMEOUT_MS)
             val st = _state.value
-            if (st is State.Connecting) {
-                // Masaustu ile ayni uyari; TURN yeniden denemesi su an yapilmaz
-                emitToast("Bağlantı uzun sürüyor — aktarma yolu deneniyor olabilir", "warning")
-                _diagnostics.value = buildString {
-                    append(peer?.diagText() ?: "peer yok")
-                    append(" · ")
-                    append("35 sn'de tamamlanamadı")
-                }
+            if (st !is State.Connecting) return@launch
+            _diagnostics.value = buildString {
+                append(peer?.diagText() ?: "peer yok")
+                append(" · 35 sn'de tamamlanamadı")
+            }
+            /* Misafir: bir kez otomatik TURN + yeniden join */
+            if (!asHost && !autoTurnTried && reconnectPassword.isNotEmpty()) {
+                autoTurnTried = true
+                settings.preferRelay = true
+                settings.publicTurnFallback = true
+                emitToast("Aktarma yolu (TURN) deneniyor…", "info")
+                val inv = reconnectInvite.ifEmpty { room }
+                val pwd = reconnectPassword
+                intentionalClose = true
+                reset(keepSignal = false)
+                intentionalClose = false
+                join(inv, pwd)
+            } else {
+                emitToast("Bağlantı uzun sürüyor — Ayarlar’dan «Yalnızca TURN» deneyin", "warning")
             }
         }
     }
 
-    /** Baglanti sirasinda WebRTC tani ozetini periyodik olarak UI'a akar. */
+    /** Baglanti / oturum sirasinda WebRTC tani ozetini UI'a akar. */
     private fun startDiagSampler() {
         diagJob?.cancel()
         diagJob = scope.launch {
             while (isActive) {
-                _diagnostics.value = peer?.diagText() ?: "eşleşme ağına bağlanılıyor"
-                delay(700)
+                val base = peer?.diagText() ?: "eşleşme ağına bağlanılıyor"
+                _diagnostics.value = if (connectedOnce && _state.value is State.Connected) {
+                    "● $base"
+                } else base
+                delay(900)
             }
         }
     }
@@ -921,13 +1231,13 @@ class SessionController(
     private fun stopDiagSampler() {
         diagJob?.cancel()
         diagJob = null
-        _diagnostics.value = ""
+        if (_state.value !is State.Connected) _diagnostics.value = ""
     }
 
-    private fun clearConnectTimeout() {
+    private fun clearConnectTimeout(stopDiag: Boolean = true) {
         connectTimeoutJob?.cancel()
         connectTimeoutJob = null
-        stopDiagSampler()
+        if (stopDiag) stopDiagSampler()
     }
 
     private fun emitToast(message: String, kind: String) {
@@ -987,5 +1297,6 @@ class SessionController(
         private const val JOIN_RETRY_MS = 2000L
         private const val JOIN_THROTTLE_MS = 1200L
         private const val CONNECT_TIMEOUT_MS = 35_000L
+        private const val MAX_RECONNECT = 3
     }
 }

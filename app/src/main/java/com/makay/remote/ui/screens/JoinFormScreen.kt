@@ -2,7 +2,6 @@ package com.makay.remote.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -55,7 +54,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.makay.remote.core.InviteParser
-import com.makay.remote.core.Primitives
 import com.makay.remote.ui.theme.MakayTheme
 
 /** Uzun yapıştırma / davet metni mi? */
@@ -84,6 +82,7 @@ fun JoinFormScreen(
     val clipboard = LocalClipboardManager.current
     val passwordFocus = remember { FocusRequester() }
 
+    /* Windows her «Bağlantıya Aç»da yeni kimlik üretir — geçmiş/ön doldurma yok */
     var roomCode by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
@@ -352,6 +351,13 @@ fun JoinFormScreen(
             }
         }
 
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "Windows’ta her «Bağlantıya Aç» yeni kimlik üretir — daveti yapıştırın veya yazın.",
+            style = MaterialTheme.typography.bodySmall,
+            color = c.muted,
+            textAlign = TextAlign.Center
+        )
         Spacer(Modifier.height(24.dp))
     }
 }

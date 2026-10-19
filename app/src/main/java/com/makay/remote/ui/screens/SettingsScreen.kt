@@ -32,6 +32,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -78,6 +79,9 @@ fun SettingsScreen(
     turnUrl: String,
     turnUser: String,
     turnPass: String,
+    rememberPassword: Boolean = false,
+    videoQuality: String = "auto",
+    trustedDevices: List<com.makay.remote.data.SettingsStore.TrustedDevice> = emptyList(),
     onDeviceName: (String) -> Unit,
     onThemeMode: (String) -> Unit,
     onMqttBroker: (String) -> Unit,
@@ -86,9 +90,15 @@ fun SettingsScreen(
     onTurnUrl: (String) -> Unit,
     onTurnUser: (String) -> Unit,
     onTurnPass: (String) -> Unit,
+    onRememberPassword: (Boolean) -> Unit = {},
+    onVideoQuality: (String) -> Unit = {},
+    onUntrust: ((String) -> Unit)? = null,
+    onClearTrusted: (() -> Unit)? = null,
     onBack: () -> Unit
 ) {
     val c = MakayTheme.c
+    var trustTick by remember { mutableStateOf(0) }
+    val trustedList = remember(trustTick, trustedDevices) { trustedDevices }
 
     // Guncelleme ekrani (AppUpdateHost) ile AYNI ViewModel ornegi kullanilir:
     // ikisi de Activity'nin ViewModelStore'una baglidir, boylece buradan
@@ -138,14 +148,72 @@ fun SettingsScreen(
             colors = fieldColors(c)
         )
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = "Windows her oturumda yeni kimlik üretir; bağlantı geçmişi tutulmaz. Daveti her seferinde yapıştırın.",
+            style = MaterialTheme.typography.bodySmall,
+            color = c.muted
+        )
 
+        Spacer(Modifier.height(16.dp))
+        Text("Ekran paylaşımı kalitesi", style = MaterialTheme.typography.bodyMedium, color = c.muted)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("auto" to "Oto", "high" to "Yüksek", "medium" to "Orta", "low" to "Düşük").forEach { (k, label) ->
+                ThemeChip(label, videoQuality == k, Modifier.weight(1f), c) { onVideoQuality(k) }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
         Text("Tema", style = MaterialTheme.typography.bodyMedium, color = c.muted)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ThemeChip("Sistem", themeMode == "system", Modifier.weight(1f), c) { onThemeMode("system") }
             ThemeChip("Koyu", themeMode == "dark", Modifier.weight(1f), c) { onThemeMode("dark") }
             ThemeChip("Açık", themeMode == "light", Modifier.weight(1f), c) { onThemeMode("light") }
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        // ---------- Guvenli cihazlar ----------
+        SectionTitle("Güvenli cihazlar")
+        Text(
+            text = if (trustedList.isEmpty()) "Kayıtlı güvenli cihaz yok (30 gün geçerli)"
+            else "${trustedList.size} cihaz — süre dolunca otomatik unutulur",
+            style = MaterialTheme.typography.bodySmall,
+            color = c.muted
+        )
+        trustedList.forEach { d ->
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(d.name, style = MaterialTheme.typography.bodyLarge, color = c.text)
+                    Text(
+                        d.id.take(8) + "…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = c.muted
+                    )
+                }
+                if (onUntrust != null) {
+                    TextButton(onClick = {
+                        onUntrust(d.id)
+                        trustTick++
+                    }) {
+                        Text("Unut", color = c.danger)
+                    }
+                }
+            }
+        }
+        if (onClearTrusted != null && trustedList.isNotEmpty()) {
+            TextButton(onClick = {
+                onClearTrusted()
+                trustTick++
+            }) {
+                Text("Tümünü temizle", color = c.danger)
+            }
         }
 
         Spacer(Modifier.height(24.dp))

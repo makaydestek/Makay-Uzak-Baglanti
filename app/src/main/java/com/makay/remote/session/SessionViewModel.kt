@@ -46,6 +46,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     val micState = controller.micState
     val peerMicState = controller.peerMicState
     val speakerOn = controller.speakerOn
+    val fileProgress = controller.fileProgress
 
     private val _toasts = MutableSharedFlow<SessionController.Event.Toast>(extraBufferCapacity = 8)
     val toasts: SharedFlow<SessionController.Event.Toast> = _toasts.asSharedFlow()
@@ -66,17 +67,26 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun host() = viewModelScope.launch { controller.host() }
     fun join(invite: String, password: String) = viewModelScope.launch { controller.join(invite, password) }
-    fun allowJoin() = controller.allowJoin()
+    fun allowJoin(trustDevice: Boolean = false) = controller.allowJoin(trustDevice)
     fun denyJoin() = controller.denyJoin()
+    fun clearTrustedDevices() = controller.settings.clearTrustedDevices()
+    fun untrustDevice(deviceId: String) = controller.settings.untrustDevice(deviceId)
     fun backToIdle() = controller.backToIdle()
     fun disconnect() = controller.disconnect()
 
     fun sendChat(text: String) = controller.sendChat(text)
     fun requestControl() = controller.requestControl()
     fun stopControl() = controller.stopControl()
+    val ctrlSent = controller.ctrlSent
 
     /** Teknisyen → host kontrol olaylari. */
     fun sendControl(payload: ControlPayload) = controller.sendControl(payload)
+    fun sendCopy() = controller.sendCopy()
+    fun sendPaste() = controller.sendPaste()
+    fun sendRightClick() = controller.sendRightClickAtPointer()
+    fun notePointer(x: Double, y: Double) = controller.notePointer(x, y)
+    fun typeText(text: String) = controller.typeText(text)
+    fun cancelFileTransfer(fid: String) = controller.cancelFileTransfer(fid)
 
     // ---------------- pano ----------------
 

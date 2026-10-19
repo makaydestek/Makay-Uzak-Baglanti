@@ -27,11 +27,37 @@ import com.makay.remote.BuildConfig
  */
 class SettingsStore(context: Context) {
 
+    private val appContext = context.applicationContext
     private val prefs: SharedPreferences =
-        context.getSharedPreferences("makay_remote", Context.MODE_PRIVATE)
+        appContext.getSharedPreferences("makay_remote", Context.MODE_PRIVATE)
+
+    /** Sifreler icin sifreli depo; basarisizsa plain prefs'e duser. */
+    private val securePrefs: SharedPreferences = runCatching {
+        val master = androidx.security.crypto.MasterKey.Builder(appContext)
+            .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        androidx.security.crypto.EncryptedSharedPreferences.create(
+            appContext,
+            "makay_remote_secure",
+            master,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }.getOrElse { prefs }
 
     init {
         scrubDeadTurnServers()
+        migratePasswordsToSecure()
+    }
+
+    /** Eski plain lastPassword / recents sifrelerini secure prefs'e tasir. */
+    private fun migratePasswordsToSecure() {
+        if (securePrefs === prefs) return
+        val plainLast = prefs.getString(KEY_LAST_PASSWORD, null)
+        if (!plainLast.isNullOrEmpty() && securePrefs.getString(KEY_LAST_PASSWORD, null).isNullOrEmpty()) {
+            securePrefs.edit().putString(KEY_LAST_PASSWORD, plainLast).apply()
+            prefs.edit().remove(KEY_LAST_PASSWORD).apply()
+        }
     }
 
     /**
@@ -85,6 +111,156 @@ class SettingsStore(context: Context) {
             deviceNameState.value = v
             prefs.edit().putString(KEY_DEVICE_NAME, v).apply()
         }
+
+    /**
+     * Kalici cihaz UUID'si — kurulumda bir kez uretilir, join-request ile
+     * karsi tarafa gider. Host bu id'yi "guvenli cihaz" listesine kaydederse
+     * sonraki baglantilarda İzin Ver gerekmez.
+     */
+    val deviceId: String
+        get() {
+            val existing = prefs.getString(KEY_DEVICE_ID, null)
+            if (!existing.isNullOrBlank()) return existing
+            val id = java.util.UUID.randomUUID().toString()
+            prefs.edit().putString(KEY_DEVICE_ID, id).apply()
+            return id
+        }
+
+    data class TrustedDevice(
+        val id: String,
+        val name: String,
+        /** epoch ms; gecmise dustuyse guven dusurulur. 0 = suresiz (eski kayit). */
+        val expiresAt: Long = 0L
+    )
+
+    /** Guven suresi: 30 gun (AnyDesk tarzi "bir sure hatirla"). */
+    private val TRUST_TTL_MS = 30L * 24 * 60 * 60 * 1000
+
+    fun trustedDevices(): List<TrustedDevice> {
+        val now = System.currentTimeMillis()
+        val raw = prefs.getString(KEY_TRUSTED, "") ?: ""
+        if (raw.isBlank()) return emptyList()
+        val parsed = raw.split('\n').mapNotNull { line ->
+            val p = line.split('|')
+            when {
+                p.size >= 3 && p[0].isNotBlank() ->
+                    TrustedDevice(p[0], p[1], p[2].toLongOrNull() ?: 0L)
+                p.size == 2 && p[0].isNotBlank() ->
+                    TrustedDevice(p[0], p[1], 0L)
+                else -> null
+            }
+        }
+        val alive = parsed.filter { it.expiresAt == 0L || it.expiresAt > now }
+        if (alive.size != parsed.size) saveTrusted(alive)
+        return alive
+    }
+
+    fun isTrusted(deviceId: String?): Boolean {
+        val id = deviceId?.trim().orEmpty()
+        if (id.isEmpty()) return false
+        return trustedDevices().any { it.id == id }
+    }
+
+    fun trustDevice(deviceId: String, name: String) {
+        val id = deviceId.trim()
+        if (id.isEmpty()) return
+        val list = trustedDevices().filter { it.id != id }.toMutableList()
+        list.add(
+            0,
+            TrustedDevice(
+                id,
+                name.trim().ifEmpty { "Cihaz" }.take(40),
+                System.currentTimeMillis() + TRUST_TTL_MS
+            )
+        )
+        saveTrusted(list.take(40))
+    }
+
+    fun untrustDevice(deviceId: String) {
+        saveTrusted(trustedDevices().filter { it.id != deviceId.trim() })
+    }
+
+    fun clearTrustedDevices() {
+        prefs.edit().remove(KEY_TRUSTED).apply()
+    }
+
+    private fun saveTrusted(list: List<TrustedDevice>) {
+        val raw = list.joinToString("\n") { "${it.id}|${it.name}|${it.expiresAt}" }
+        prefs.edit().putString(KEY_TRUSTED, raw).apply()
+    }
+
+    // ---------- son baglantilar / sifre hatirla ----------
+    data class RecentRoom(val code: String, val password: String, val label: String, val ts: Long)
+
+    private val rememberPassState = boolState(KEY_REMEMBER_PASS, false)
+    var rememberPassword: Boolean
+        get() = rememberPassState.value
+        set(v) {
+            rememberPassState.value = v
+            prefs.edit().putBoolean(KEY_REMEMBER_PASS, v).apply()
+            if (!v) {
+                recentRooms().forEach { securePrefs.edit().remove(securePwdKey(it.code)).apply() }
+                lastPassword = ""
+            }
+        }
+
+    /** auto | high | medium | low — ekran paylasimi kalitesi. */
+    private val videoQualityState = stringState(KEY_VIDEO_QUALITY, "auto")
+    var videoQuality: String
+        get() = videoQualityState.value
+        set(v) {
+            val n = when (v) {
+                "high", "medium", "low", "auto" -> v
+                else -> "auto"
+            }
+            videoQualityState.value = n
+            prefs.edit().putString(KEY_VIDEO_QUALITY, n).apply()
+        }
+
+    fun recentRooms(): List<RecentRoom> {
+        val raw = prefs.getString(KEY_RECENTS, "") ?: ""
+        if (raw.isBlank()) return emptyList()
+        return raw.split('\n').mapNotNull { line ->
+            val p = line.split('|')
+            if (p.size >= 4 && p[0].length == 8) {
+                val code = p[0]
+                /* Sifre secure prefs'te; eski kayitlarda p[1] fallback */
+                val pwd = if (rememberPassword) {
+                    securePrefs.getString(securePwdKey(code), null) ?: p[1]
+                } else ""
+                RecentRoom(code, pwd, p[2], p[3].toLongOrNull() ?: 0L)
+            } else null
+        }.sortedByDescending { it.ts }.take(12)
+    }
+
+    fun rememberRoom(code: String, password: String, label: String = "") {
+        val c = code.filter { it.isLetterOrDigit() }.uppercase().take(8)
+        if (c.length != 8) return
+        val list = recentRooms().filter { it.code != c }.toMutableList()
+        list.add(0, RecentRoom(c, "", label.take(40), System.currentTimeMillis()))
+        saveRecents(list.take(12))
+        if (rememberPassword && password.isNotEmpty()) {
+            securePrefs.edit().putString(securePwdKey(c), password).apply()
+            lastPassword = password
+        } else {
+            securePrefs.edit().remove(securePwdKey(c)).apply()
+            lastPassword = ""
+        }
+        lastRoom = c
+    }
+
+    private fun saveRecents(list: List<RecentRoom>) {
+        /* Metadata plain; sifreler securePrefs'te */
+        val raw = list.joinToString("\n") { "${it.code}||${it.label}|${it.ts}" }
+        prefs.edit().putString(KEY_RECENTS, raw).apply()
+    }
+
+    fun clearRecents() {
+        recentRooms().forEach { securePrefs.edit().remove(securePwdKey(it.code)).apply() }
+        prefs.edit().remove(KEY_RECENTS).apply()
+    }
+
+    private fun securePwdKey(code: String) = "rp_$code"
 
     // ---------- baglanti ----------
     // NOT: Masaustundaki "connMode / lanSignal / signalUrl / internetSignalUrl"
@@ -148,11 +324,19 @@ class SettingsStore(context: Context) {
         set(v) = prefs.edit().putString(KEY_LAST_ROOM, v).apply()
 
     var lastPassword: String
-        get() = prefs.getString(KEY_LAST_PASSWORD, "") ?: ""
-        set(v) = prefs.edit().putString(KEY_LAST_PASSWORD, v).apply()
+        get() = securePrefs.getString(KEY_LAST_PASSWORD, null)
+            ?: prefs.getString(KEY_LAST_PASSWORD, "") ?: ""
+        set(v) {
+            securePrefs.edit().putString(KEY_LAST_PASSWORD, v).apply()
+            /* Plain kopyayi sil — sifre yalnizca secure'da kalsin */
+            if (prefs.contains(KEY_LAST_PASSWORD)) {
+                prefs.edit().remove(KEY_LAST_PASSWORD).apply()
+            }
+        }
 
     fun clearSession() {
         prefs.edit().remove(KEY_LAST_ROOM).remove(KEY_LAST_PASSWORD).apply()
+        securePrefs.edit().remove(KEY_LAST_PASSWORD).apply()
     }
 
     private fun defaultDeviceName(): String = "${android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${android.os.Build.MODEL}"
@@ -161,6 +345,11 @@ class SettingsStore(context: Context) {
     companion object {
         private const val KEY_THEME = "theme"
         private const val KEY_DEVICE_NAME = "device_name"
+        private const val KEY_DEVICE_ID = "device_id"
+        private const val KEY_TRUSTED = "trusted_devices"
+        private const val KEY_RECENTS = "recent_rooms"
+        private const val KEY_REMEMBER_PASS = "remember_password"
+        private const val KEY_VIDEO_QUALITY = "video_quality"
         private const val KEY_PREFER_RELAY = "prefer_relay"
         private const val KEY_PUBLIC_TURN = "public_turn"
         private const val KEY_MQTT_BROKER = "mqtt_broker"

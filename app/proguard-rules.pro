@@ -3,7 +3,12 @@
 # ---- WebRTC (libwebrtc) ----
 -keep class org.webrtc.** { *; }
 -keep class org.freedesktop.** { *; }
+-keepclasseswithmembernames,includedescriptorclasses class * {
+    native <methods>;
+}
+-keepattributes InnerClasses,EnclosingMethod,Signature,*Annotation*
 -dontwarn org.webrtc.**
+-dontwarn org.chromium.**
 
 # ---- Paho MQTT (reflection tabanli baglanti) ----
 -keep class org.eclipse.paho.** { *; }

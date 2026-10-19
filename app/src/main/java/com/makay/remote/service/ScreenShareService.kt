@@ -88,8 +88,7 @@ class ScreenShareService : Service() {
 
     private fun startSharing(resultCode: Int, data: Intent, peer: PeerBridge) {
         val metrics = displayMetrics()
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
+        val (width, height, fps) = captureProfile(metrics)
 
         val source = peer.createVideoSource()
         videoSource = source
@@ -110,10 +109,38 @@ class ScreenShareService : Service() {
         helper = h
 
         capt.initialize(h, this, source.capturerObserver)
-        capt.startCapture(width, height, 30)
+        capt.startCapture(width, height, fps)
+        Log.i(TAG, "Capture $width×$height @ ${fps}fps")
 
         // PeerBridge track'i ekler ve yeniden pazarligi baslatir
         peer.addScreenShareTrack(source, h, width, height)
+    }
+
+    /**
+     * Ayarlar > videoQuality: auto|high|medium|low.
+     * Mobil bantta native 30 fps pahali; olcek / fps dusurulur.
+     */
+    private fun captureProfile(m: DisplayMetrics): Triple<Int, Int, Int> {
+        val quality = runCatching {
+            com.makay.remote.data.SettingsStore(this).videoQuality
+        }.getOrDefault("auto")
+        val scale = when (quality) {
+            "high" -> 1.0f
+            "medium" -> 0.75f
+            "low" -> 0.5f
+            else -> { /* auto: genis ekranda hafif dusur */
+                if (m.widthPixels * m.heightPixels > 2_073_600) 0.75f else 1.0f
+            }
+        }
+        val fps = when (quality) {
+            "high" -> 30
+            "medium" -> 20
+            "low" -> 12
+            else -> 24
+        }
+        val w = (m.widthPixels * scale).toInt().coerceAtLeast(320).let { it - it % 2 }
+        val h = (m.heightPixels * scale).toInt().coerceAtLeast(240).let { it - it % 2 }
+        return Triple(w, h, fps)
     }
 
     private fun displayMetrics(): DisplayMetrics {
