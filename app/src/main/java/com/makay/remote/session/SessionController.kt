@@ -130,6 +130,10 @@ class SessionController(
     val diagnostics: StateFlow<String> = _diagnostics.asStateFlow()
     private var diagJob: Job? = null
 
+    /** Onay beklerken kullaniciya gosterilen kisa durum (join-request yayini). */
+    private val _joinHint = MutableStateFlow("")
+    val joinHint: StateFlow<String> = _joinHint.asStateFlow()
+
     private val _events = MutableSharedFlow<Event>(extraBufferCapacity = 32)
     val events: SharedFlow<Event> = _events.asSharedFlow()
 
@@ -346,17 +350,38 @@ class SessionController(
     private fun startJoinRetries() {
         joinRetryJob?.cancel()
         joinRetryJob = scope.launch {
+            /* Broker aboneliginin yerlesmesi icin kisa bekleme — bazi halka
+               acik MQTT'lerde hemen yayinlanan ilk join-request kaybolabiliyor. */
+            delay(400)
+            var sent = 0
+            var failures = 0
             while (isActive) {
                 val st = _state.value
                 if (st !is State.Joining) break
                 if (peer != null) break
-                runCatching {
+                val ok = runCatching {
                     signal?.publish(
                         SignalEnvelope(
                             type = SignalEnvelope.TYPE_JOIN_REQUEST,
-                            name = settings.deviceName
+                            name = settings.deviceName.ifBlank { "Android" }
                         )
                     )
+                }.isSuccess
+                if (ok) {
+                    sent++
+                    failures = 0
+                    _joinHint.value = when {
+                        sent == 1 -> "Onay isteği gönderildi — Windows’ta «İzin Ver» bekleniyor"
+                        sent < 8 -> "Onay isteği yeniden gönderildi ($sent)"
+                        else -> "Hâlâ yanıt yok — Windows’ta Bağlantıya Aç açık mı? Şifre doğru mu?"
+                    }
+                } else {
+                    failures++
+                    Log.w(TAG, "join-request yayinlanamadi (deneme=$failures)")
+                    _joinHint.value = "İstek gönderilemedi — internet bağlantısını kontrol edin"
+                    if (failures >= 3) {
+                        emitToast("Eşleşme ağına yazılamıyor — Wi‑Fi / mobil veriyi kontrol edin", "warning")
+                    }
                 }
                 delay(JOIN_RETRY_MS)
             }
@@ -392,6 +417,7 @@ class SessionController(
                 if (peer != null) return
                 val code = env.code ?: return
                 joinRetryJob?.cancel()
+                _joinHint.value = ""
                 clearConnectTimeout()
                 _state.value = State.Connecting(asHost = false)
                 startConnectTimeout()
@@ -840,6 +866,7 @@ class SessionController(
         joinRetryJob?.cancel()
         joinRetryJob = null
         clearConnectTimeout()
+        _joinHint.value = ""
         peer?.let { runCatching { it.close("reset") } }
         peer = null
         com.makay.remote.rtc.PeerRegistry.current = null

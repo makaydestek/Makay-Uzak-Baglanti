@@ -22,7 +22,11 @@ import com.makay.remote.ui.theme.MakayTheme
 
 /** Katilimci: join-request gonderiliyor, host onayi bekleniyor. */
 @Composable
-fun JoinPendingScreen(room: String, onCancel: () -> Unit) {
+fun JoinPendingScreen(
+    room: String,
+    onCancel: () -> Unit,
+    statusHint: String = ""
+) {
     val c = MakayTheme.c
     Column(
         modifier = Modifier
@@ -47,6 +51,16 @@ fun JoinPendingScreen(room: String, onCancel: () -> Unit) {
                 text = "Kimlik: ${Primitives.formatRoom(room)}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = c.muted
+            )
+        }
+        if (statusHint.isNotBlank()) {
+            Spacer(Modifier.height(14.dp))
+            Text(
+                text = statusHint,
+                style = MaterialTheme.typography.bodySmall,
+                color = c.accent2,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
             )
         }
         Spacer(Modifier.height(28.dp))

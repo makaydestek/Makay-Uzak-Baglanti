@@ -58,6 +58,15 @@ import com.makay.remote.core.InviteParser
 import com.makay.remote.core.Primitives
 import com.makay.remote.ui.theme.MakayTheme
 
+/** Uzun yapıştırma / davet metni mi? */
+private fun looksLikeInvitePaste(raw: String): Boolean =
+    raw.length > 12 ||
+        raw.contains('\n') ||
+        raw.contains("Kimlik", ignoreCase = true) ||
+        raw.contains("Şifre", ignoreCase = true) ||
+        raw.contains("Sifre", ignoreCase = true) ||
+        raw.contains("Sinyal", ignoreCase = true)
+
 /**
  * Ana ekran: "Bağlantıya Aç" + kimlik/şifre ile "Bağlan".
  *
@@ -84,9 +93,10 @@ fun JoinFormScreen(
     fun applyInviteText(raw: String) {
         val parsed = InviteParser.parse(raw)
         if (parsed.code.isNotEmpty()) {
-            roomCode = Primitives.formatRoom(parsed.code)
+            // Ham 8 karakter — bosluk VisualTransformation ile gosterilir
+            roomCode = parsed.code.filter { it.isLetterOrDigit() }.uppercase().take(8)
         } else {
-            roomCode = formatRoomInput(raw)
+            roomCode = raw.filter { it.isLetterOrDigit() }.uppercase().take(8)
         }
         if (parsed.password.isNotEmpty()) password = parsed.password
         signalUrl = parsed.signalUrl
@@ -101,10 +111,10 @@ fun JoinFormScreen(
 
     fun submitJoin() {
         val digits = roomCode.filter { it.isLetterOrDigit() }
-        if (digits.isEmpty() && password.isBlank()) return
+        if (digits.length < 8 || password.isBlank()) return
         focusManager.clearFocus()
         val invite = buildString {
-            append(roomCode.trim())
+            append(digits)
             if (signalUrl.isNotEmpty()) {
                 append("\nSinyal: ")
                 append(signalUrl)
@@ -215,18 +225,14 @@ fun JoinFormScreen(
             OutlinedTextField(
                 value = roomCode,
                 onValueChange = { raw ->
-                    // Uzun yapıştırma (davet metni) → otomatik doldur
-                    if (raw.length > 12 || raw.contains('\n') ||
-                        raw.contains("Kimlik", ignoreCase = true) ||
-                        raw.contains("Şifre", ignoreCase = true) ||
-                        raw.contains("Sifre", ignoreCase = true)
-                    ) {
+                    if (looksLikeInvitePaste(raw)) {
                         applyInviteText(raw)
                         if (InviteParser.parse(raw).password.isNotEmpty()) {
                             passwordFocus.requestFocus()
                         }
                     } else {
-                        roomCode = formatRoomInput(raw)
+                        // Yalnizca harf/rakam; bosluk EKLENMEZ (imlec kaymasin)
+                        roomCode = raw.filter { it.isLetterOrDigit() }.uppercase().take(8)
                         pasteHint = null
                     }
                 },
@@ -234,9 +240,10 @@ fun JoinFormScreen(
                 placeholder = { Text("Örn. AB12 CD34") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                visualTransformation = RoomCodeVisualTransformation,
                 textStyle = MaterialTheme.typography.titleMedium.copy(
                     fontFamily = FontFamily.Monospace,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Start
                 ),
                 keyboardOptions = KeyboardOptions(
                     capitalization = KeyboardCapitalization.Characters,
@@ -333,7 +340,7 @@ fun JoinFormScreen(
 
             OutlinedButton(
                 onClick = { submitJoin() },
-                enabled = roomCode.filter { it.isLetterOrDigit() }.length >= 8 && password.isNotBlank(),
+                enabled = roomCode.length >= 8 && password.isNotBlank(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
@@ -347,11 +354,4 @@ fun JoinFormScreen(
 
         Spacer(Modifier.height(24.dp))
     }
-}
-
-/** Kimliği 8 karaktere indirir ve `XXXX XXXX` biçiminde gösterir. */
-private fun formatRoomInput(raw: String): String {
-    val clean = raw.filter { it.isLetterOrDigit() }.uppercase().take(8)
-    return if (clean.length <= 4) clean
-    else clean.substring(0, 4) + " " + clean.substring(4)
 }

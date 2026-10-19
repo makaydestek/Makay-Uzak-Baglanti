@@ -35,6 +35,9 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     /** Baglanti sirasindaki WebRTC tani ozeti (tek satir, "Baglaniyor" ekraninda). */
     val diagnostics = controller.diagnostics
 
+    /** Onay beklerken join-request durum ipucu. */
+    val joinHint = controller.joinHint
+
     // ---------------- pano / ses ----------------
 
     /** Gelen pano metni (onay dialoju icin). */
