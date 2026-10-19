@@ -48,6 +48,8 @@ class SettingsStore(context: Context) {
     init {
         scrubDeadTurnServers()
         migratePasswordsToSecure()
+        /* Windows her Bağlantıya Aç'ta yeni kimlik üretir — eski kimlik geçmişi gereksiz */
+        prefs.edit().remove(KEY_RECENTS).putBoolean(KEY_REMEMBER_PASS, false).apply()
     }
 
     /** Eski plain lastPassword / recents sifrelerini secure prefs'e tasir. */

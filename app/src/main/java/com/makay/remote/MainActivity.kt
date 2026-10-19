@@ -81,23 +81,21 @@ class MainActivity : ComponentActivity() {
         _updatePromptToken.set(System.currentTimeMillis())
     }
 
+    @Deprecated("Compose BackHandler oturumda tam ekran/koparma öncelikli")
     override fun onBackPressed() {
         val state = vm.state.value
+        /* Connected: SessionScreen BackHandler (once FS çık → kopar) işler.
+           Buraya düşerse Compose tüketmemiştir — uygulamadan çıkış onayı. */
         when (state) {
             is SessionController.State.Connected -> {
-                // Bağlı iken geri -> çıkış onayı
-                showYesNoDialog(
-                    "Uygulamadan Çıkış Yapmak İstiyor musunuz?",
-                    { vm.controller.shutdownNow(); finish() }, // Evet
-                    { /* Hayır - iptal */ }                                               // Hayır
-                )
+                /* SessionScreen yoksa (nadir) — oturumu kopar, uygulamayı kapatma */
+                vm.disconnect()
             }
             else -> {
-                // Diğer ekranlar (Idle, Hosting, vb.) -> çıkış onayı
                 showYesNoDialog(
                     "Uygulamadan Çıkış Yapmak İstiyor musunuz?",
-                    { vm.controller.shutdownNow(); finish() }, // Evet
-                    { /* Hayır - iptal */ }                   // Hayır
+                    { vm.controller.shutdownNow(); finish() },
+                    { }
                 )
             }
         }

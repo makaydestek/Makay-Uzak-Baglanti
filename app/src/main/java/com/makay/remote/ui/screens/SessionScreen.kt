@@ -8,6 +8,7 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import android.widget.FrameLayout
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -27,20 +28,24 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mouse
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -88,6 +93,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 
 /**
  * Bagli oturum ekrani: uzak video + sohbet + kontrol + dosya gonderimi.
@@ -115,15 +121,29 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
 
     var input by remember { mutableStateOf("") }
     var touchMode by remember { mutableStateOf(TouchMode.NORMAL) }
-    /* AnyDesk varsayilan: touchpad — kucuk ekranda imlec her yere ulasir */
-    var inputMode by remember { mutableStateOf(InputMode.TOUCHPAD) }
+    /* Dogudan: dokundugun yer = tik (Explorer klasor/disk acmak icin dogal) */
+    var inputMode by remember { mutableStateOf(InputMode.DIRECT) }
     /* Misafir: baglaninca immersif; video ASLA agactan cikmaz (SurfaceView kaybi) */
     var fullscreen by remember { mutableStateOf(!asHost) }
     var showHint by remember { mutableStateOf(true) }
     var showKeyboard by remember { mutableStateOf(false) }
     var keyboardText by remember { mutableStateOf("") }
+    var showChat by remember { mutableStateOf(false) }
+    var toolsExpanded by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val view = LocalView.current
+    /* Fit sifirlamak icin RemoteVideoBox'a sinyal */
+    var fitNonce by remember { mutableStateOf(0) }
+
+    /* Geri: once tam ekrandan cik, sonra baglantiyi kopar (uygulamadan cikma) */
+    BackHandler {
+        when {
+            showKeyboard -> showKeyboard = false
+            showChat -> showChat = false
+            fullscreen && !asHost -> fullscreen = false
+            else -> vm.disconnect()
+        }
+    }
 
     /* Jest ipucu: baglantidan birka sn sonra gizle */
     LaunchedEffect(controlState) {
@@ -210,6 +230,7 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
             controlEnabled = controlState == SessionController.ControlState.GRANTED,
             touchMode = touchMode,
             inputMode = inputMode,
+            fitNonce = fitNonce,
             onControl = { payload ->
                 if (payload.x != null && payload.y != null) {
                     vm.notePointer(payload.x!!, payload.y!!)
@@ -219,14 +240,14 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
             modifier = Modifier.fillMaxSize()
         )
 
-        /* Kisa jest ipucu — baglanti sonrasi otomatik gizlenir (debug/ICE yok) */
+        /* Kisa jest ipucu — baglanti sonrasi otomatik gizlenir */
         if (!asHost && showHint && controlState == SessionController.ControlState.GRANTED) {
             Text(
                 text = when {
-                    touchMode == TouchMode.DRAG -> "Sürükle açık — basılı kaydırın"
+                    touchMode == TouchMode.DRAG -> "Sürükle · basılı kaydırın"
                     inputMode == InputMode.TOUCHPAD ->
-                        "Touchpad · Kaydır=imleç · Dokun=tık · Basılı tut=sağ tık"
-                    else -> "Doğrudan · Dokunduğun yer=imleç"
+                        "Touchpad · kaydır=imleç · dokun=tık · çift dokun=aç · basılı=sağ tık"
+                    else -> "Doğrudan · dokun=tık · çift dokun=klasör/disk aç · basılı=sağ tık"
                 },
                 color = Color.White,
                 style = MaterialTheme.typography.labelSmall,
@@ -239,42 +260,52 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
             )
         }
 
-        /* Ust kontroller — her zaman video uzerinde (video uncompose olmaz) */
+        /* Ust cubuk: her zaman gorunur (yatayda X kaybolmasin) */
         Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .statusBarsPadding()
-                .padding(4.dp),
+                .padding(4.dp)
+                .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
+                .padding(horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (!asHost && controlState == SessionController.ControlState.GRANTED) {
-                TextButton(
+                IconButton(
                     onClick = {
                         inputMode = if (inputMode == InputMode.TOUCHPAD)
                             InputMode.DIRECT else InputMode.TOUCHPAD
-                    }
+                    },
+                    modifier = Modifier.size(40.dp)
                 ) {
-                    Text(
-                        if (inputMode == InputMode.TOUCHPAD) "Touchpad" else "Doğrudan",
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier
-                            .background(c.primary.copy(alpha = 0.85f), RoundedCornerShape(6.dp))
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    Icon(
+                        if (inputMode == InputMode.TOUCHPAD) Icons.Filled.TouchApp else Icons.Filled.Mouse,
+                        contentDescription = if (inputMode == InputMode.TOUCHPAD) "Touchpad" else "Doğrudan",
+                        tint = Color.White
                     )
                 }
+                IconButton(
+                    onClick = { fitNonce++ },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(Icons.Filled.FitScreen, contentDescription = "Sığdır", tint = Color.White)
+                }
             }
-            IconButton(onClick = { fullscreen = !fullscreen }) {
+            IconButton(
+                onClick = { fullscreen = !fullscreen },
+                modifier = Modifier.size(40.dp)
+            ) {
                 Icon(
                     if (fullscreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
                     contentDescription = if (fullscreen) "Paneli aç" else "Tam ekran",
                     tint = Color.White
                 )
             }
-            if (!fullscreen) {
-                IconButton(onClick = { vm.disconnect() }) {
-                    Icon(Icons.Filled.Close, contentDescription = "Bağlantıyı kapat", tint = c.danger)
-                }
+            IconButton(
+                onClick = { vm.disconnect() },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = "Bağlantıyı kapat", tint = c.danger)
             }
         }
 
@@ -309,246 +340,203 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
             }
         }
 
-        /* Panel (toolbar + sohbet): tam ekranda gizli — video yerinde kalir */
+        /* Kompakt alt cubuk — tam ekranda gizli; video yerinde kalir */
         if (!fullscreen) {
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .background(c.bg.copy(alpha = 0.94f))
-                    .padding(12.dp)
+                    .background(c.bg.copy(alpha = 0.92f))
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
             ) {
                 Text(
                     peerName,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = c.text
+                    style = MaterialTheme.typography.labelMedium,
+                    color = c.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = buildString {
-                        append(if (asHost) "Ekranınız paylaşılıyor" else "Uzak ekran izleniyor")
-                        if (peerMic == true) append(" · Karşı mic açık")
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.muted
-                )
-                Spacer(Modifier.height(6.dp))
 
-        /* AnyDesk/TV: sag tik + surukle + girdi modu */
-        if (!asHost && controlState == SessionController.ControlState.GRANTED) {
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedButton(
-                    onClick = { vm.sendRightClick() },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Sağ tık", style = MaterialTheme.typography.labelMedium) }
-                if (touchMode == TouchMode.DRAG) {
-                    Button(
-                        onClick = { touchMode = TouchMode.NORMAL },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = c.warn)
-                    ) { Text("Sürükle", style = MaterialTheme.typography.labelMedium) }
-                } else {
-                    OutlinedButton(
-                        onClick = { touchMode = TouchMode.DRAG },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("Sürükle", style = MaterialTheme.typography.labelMedium) }
-                }
-                OutlinedButton(
-                    onClick = { vm.sendCopy() },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Kopyala", style = MaterialTheme.typography.labelMedium) }
-                OutlinedButton(
-                    onClick = { vm.sendPaste() },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Yapıştır", style = MaterialTheme.typography.labelMedium) }
-                OutlinedButton(
-                    onClick = { showKeyboard = true },
-                    modifier = Modifier.weight(1f)
+                /* Tek satir ikon cubugu */
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Filled.Keyboard, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(2.dp))
-                    Text("Yaz", style = MaterialTheme.typography.labelMedium)
-                }
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        // ---------- kontrol cubugu ----------
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Host: ekran paylasimini baslat/durdur
-            if (asHost) {
-                if (!sharing) {
-                    Button(
-                        onClick = {
-                            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    if (asHost) {
+                        CompactIconBtn(
+                            icon = Icons.Filled.Fullscreen,
+                            tint = if (sharing) c.warn else c.accent,
+                            desc = if (sharing) "Paylaşımı durdur" else "Ekranı paylaş"
+                        ) {
+                            if (sharing) {
+                                vm.stopScreenShare()
+                                sharing = false
+                            } else if (android.os.Build.VERSION.SDK_INT >= 33) {
                                 notifPermissionLauncher.launch(
                                     android.Manifest.permission.POST_NOTIFICATIONS
                                 )
                             } else {
-                                val mpm = context.getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE)
-                                    as android.media.projection.MediaProjectionManager
+                                val mpm = context.getSystemService(
+                                    android.content.Context.MEDIA_PROJECTION_SERVICE
+                                ) as android.media.projection.MediaProjectionManager
                                 projectionLauncher.launch(mpm.createScreenCaptureIntent())
                             }
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = c.primary)
-                    ) { Text("Ekranı Paylaş") }
-                } else {
-                    Button(
-                        onClick = {
-                            vm.stopScreenShare()
-                            sharing = false
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = c.warn)
-                    ) { Text("Paylaşımı Durdur") }
-                }
-            }
-
-            if (!asHost) {
-                when (controlState) {
-                    SessionController.ControlState.NONE ->
-                        OutlinedButton(onClick = { vm.requestControl() }, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Filled.Mouse, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Kontrol İste")
                         }
-                    SessionController.ControlState.REQUESTED ->
-                        OutlinedButton(onClick = { }, enabled = false, modifier = Modifier.weight(1f)) {
-                            Text("Onay Bekleniyor…")
-                        }
-                    SessionController.ControlState.GRANTED ->
-                        Button(
-                            onClick = { vm.stopControl() },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = c.warn)
-                        ) { Text("Kontrolü Bırak") }
-                    SessionController.ControlState.DENIED ->
-                        OutlinedButton(onClick = { vm.requestControl() }, modifier = Modifier.weight(1f)) {
-                            Text("Tekrar Dene")
-                        }
-                }
-            }
-
-            OutlinedButton(
-                onClick = { pickFile.launch(arrayOf("*/*")) },
-                modifier = Modifier.weight(1f)
-            ) {
-                Icon(Icons.Filled.AttachFile, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Dosya Gönder")
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        // ---------- ses + pano (telefon gorusmesi yapisi) ----------
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = {
-                    if (micOn) {
-                        vm.toggleMic()
-                    } else if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
-                        != android.content.pm.PackageManager.PERMISSION_GRANTED
-                    ) {
-                        micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                     } else {
-                        vm.toggleMic()
+                        CompactIconBtn(
+                            icon = Icons.Filled.Mouse,
+                            tint = when (controlState) {
+                                SessionController.ControlState.GRANTED -> c.accent
+                                SessionController.ControlState.REQUESTED -> c.warn
+                                else -> c.muted
+                            },
+                            desc = "Kontrol"
+                        ) {
+                            when (controlState) {
+                                SessionController.ControlState.GRANTED -> vm.stopControl()
+                                SessionController.ControlState.REQUESTED -> Unit
+                                else -> vm.requestControl()
+                            }
+                        }
                     }
-                },
-                modifier = Modifier.weight(1f)
-            ) {
-                Icon(
-                    if (micOn) Icons.Filled.Mic else Icons.Filled.MicOff,
-                    contentDescription = if (micOn) "Mikrofon açık" else "Mikrofon kapalı",
-                    modifier = Modifier.size(16.dp),
-                    tint = if (micOn) c.accent else c.muted
-                )
-                Spacer(Modifier.width(4.dp))
-                Text("Mikrofon")
-            }
 
-            OutlinedButton(
-                onClick = { vm.setSpeaker(!speakerOn) },
-                modifier = Modifier.weight(1f)
-            ) {
-                Icon(
-                    if (speakerOn) Icons.AutoMirrored.Filled.VolumeUp
-                    else Icons.AutoMirrored.Filled.VolumeOff,
-                    contentDescription = if (speakerOn) "Hoparlör açık" else "Hoparlör kapalı",
-                    modifier = Modifier.size(16.dp),
-                    tint = if (speakerOn) c.accent else c.muted
-                )
-                Spacer(Modifier.width(4.dp))
-                Text("Hoparlör")
-            }
+                    if (!asHost && controlState == SessionController.ControlState.GRANTED) {
+                        CompactIconBtn(
+                            icon = Icons.Filled.TouchApp,
+                            tint = if (touchMode == TouchMode.DRAG) c.warn else c.muted,
+                            desc = "Sürükle"
+                        ) {
+                            touchMode = if (touchMode == TouchMode.DRAG)
+                                TouchMode.NORMAL else TouchMode.DRAG
+                        }
+                        CompactIconBtn(
+                            icon = Icons.Filled.Keyboard,
+                            tint = c.muted,
+                            desc = "Yaz"
+                        ) { showKeyboard = true }
+                    }
 
-            OutlinedButton(
-                onClick = {
-                    val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
-                        as ClipboardManager
-                    val clip = cm.primaryClip
-                    val text = if (clip != null && clip.itemCount > 0) {
-                        clip.getItemAt(0).coerceToText(context).toString()
-                    } else ""
-                    vm.sendClipboard(text)
-                },
-                modifier = Modifier.weight(1f)
-            ) {
-                Icon(Icons.Filled.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Pano")
+                    CompactIconBtn(
+                        icon = if (micOn) Icons.Filled.Mic else Icons.Filled.MicOff,
+                        tint = if (micOn) c.accent else c.muted,
+                        desc = "Mikrofon"
+                    ) {
+                        if (micOn) vm.toggleMic()
+                        else if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                            != android.content.pm.PackageManager.PERMISSION_GRANTED
+                        ) {
+                            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                        } else vm.toggleMic()
+                    }
+
+                    CompactIconBtn(
+                        icon = if (speakerOn) Icons.AutoMirrored.Filled.VolumeUp
+                        else Icons.AutoMirrored.Filled.VolumeOff,
+                        tint = if (speakerOn) c.accent else c.muted,
+                        desc = "Hoparlör"
+                    ) { vm.setSpeaker(!speakerOn) }
+
+                    CompactIconBtn(
+                        icon = Icons.Filled.AttachFile,
+                        tint = c.muted,
+                        desc = "Dosya"
+                    ) { pickFile.launch(arrayOf("*/*")) }
+
+                    CompactIconBtn(
+                        icon = Icons.AutoMirrored.Filled.Chat,
+                        tint = if (showChat) c.accent else c.muted,
+                        desc = "Sohbet"
+                    ) { showChat = !showChat }
+
+                    CompactIconBtn(
+                        icon = Icons.Filled.ContentPaste,
+                        tint = if (toolsExpanded) c.accent else c.muted,
+                        desc = "Diğer"
+                    ) { toolsExpanded = !toolsExpanded }
+                }
+
+                if (toolsExpanded && !asHost && controlState == SessionController.ControlState.GRANTED) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { vm.sendRightClick() },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Sağ tık", style = MaterialTheme.typography.labelSmall) }
+                        OutlinedButton(
+                            onClick = { vm.sendCopy() },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Kopyala", style = MaterialTheme.typography.labelSmall) }
+                        OutlinedButton(
+                            onClick = { vm.sendPaste() },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Yapıştır", style = MaterialTheme.typography.labelSmall) }
+                        OutlinedButton(
+                            onClick = {
+                                val cm = context.getSystemService(
+                                    android.content.Context.CLIPBOARD_SERVICE
+                                ) as ClipboardManager
+                                val clip = cm.primaryClip
+                                val text = if (clip != null && clip.itemCount > 0) {
+                                    clip.getItemAt(0).coerceToText(context).toString()
+                                } else ""
+                                vm.sendClipboard(text)
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Pano", style = MaterialTheme.typography.labelSmall) }
+                    }
+                }
+
+                if (showChat) {
+                    Spacer(Modifier.height(6.dp))
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(120.dp)
+                            .background(c.card, RoundedCornerShape(10.dp))
+                            .padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(chat) { m -> ChatBubble(m, mine = m.mine, c = c) }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = input,
+                            onValueChange = { input = it },
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            placeholder = { Text("Mesaj…", color = c.muted) },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = c.accent,
+                                unfocusedBorderColor = c.cardBorder,
+                                focusedTextColor = c.text,
+                                unfocusedTextColor = c.text
+                            )
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        IconButton(
+                            onClick = { if (vm.sendChat(input)) input = "" },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(c.primary, CircleShape)
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "Gönder",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
-
-        Spacer(Modifier.height(8.dp))
-
-        // ---------- sohbet ----------
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(if (asHost) 140.dp else 88.dp)
-                .background(c.card, RoundedCornerShape(12.dp))
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            items(chat) { m ->
-                ChatBubble(m, mine = m.mine, c = c)
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        // ---------- mesaj girdisi ----------
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = input,
-                onValueChange = { input = it },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Mesaj yazın…", color = c.muted) },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = c.accent,
-                    unfocusedBorderColor = c.cardBorder,
-                    focusedTextColor = c.text,
-                    unfocusedTextColor = c.text
-                )
-            )
-            Spacer(Modifier.width(8.dp))
-            Button(
-                onClick = {
-                    if (vm.sendChat(input)) input = ""
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = c.primary)
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Gönder")
-            }
-        }
-            } // Column panel
-        } // if (!fullscreen)
     } // Box
 
     if (showKeyboard) {
@@ -656,12 +644,25 @@ private enum class InputMode { TOUCHPAD, DIRECT }
 private data class ContentRect(val left: Float, val top: Float, val w: Float, val h: Float)
 
 @Composable
+private fun CompactIconBtn(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    tint: Color,
+    desc: String,
+    onClick: () -> Unit
+) {
+    IconButton(onClick = onClick, modifier = Modifier.size(42.dp)) {
+        Icon(icon, contentDescription = desc, tint = tint, modifier = Modifier.size(22.dp))
+    }
+}
+
+@Composable
 private fun RemoteVideoBox(
     track: VideoTrack?,
     eglContext: EglBase.Context?,
     controlEnabled: Boolean,
     touchMode: TouchMode,
     inputMode: InputMode,
+    fitNonce: Int = 0,
     onControl: (ControlPayload) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -670,6 +671,13 @@ private fun RemoteVideoBox(
     val holder = remember { VideoBoxHolder() }
     holder.touchMode = touchMode
     holder.inputMode = inputMode
+
+    LaunchedEffect(fitNonce) {
+        if (fitNonce > 0) {
+            holder.fitReset()
+            holder.syncCursorView()
+        }
+    }
 
     Box(
         modifier
@@ -752,17 +760,16 @@ private fun RemoteVideoBox(
                         )
                         holder.touch = touch
 
-                        /* Yerel imlec gostergesi (AnyDesk/TV — nereye tikladigini goster) */
+                        /* Touchpad imlec: ince halka — merkez = gonderilen (x,y), Windows imleciyle hizali */
                         val cursor = View(ctx).apply {
-                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
                             background = android.graphics.drawable.GradientDrawable().apply {
                                 shape = android.graphics.drawable.GradientDrawable.OVAL
-                                setColor(android.graphics.Color.argb(220, 0, 180, 255))
-                                setStroke(3, android.graphics.Color.WHITE)
+                                setColor(android.graphics.Color.TRANSPARENT)
+                                setStroke(3, android.graphics.Color.argb(230, 0, 180, 255))
                             }
                             visibility = View.GONE
                         }
-                        val cursorLp = FrameLayout.LayoutParams(36, 36)
+                        val cursorLp = FrameLayout.LayoutParams(22, 22)
                         viewport.addView(cursor, cursorLp)
                         holder.cursorView = cursor
 
@@ -783,8 +790,10 @@ private fun RemoteVideoBox(
                         if (controlEnabled) controlTouchListener(onControl, holder)
                         else null
                     )
+                    /* Dogudan modda Windows imleci videoda gorunur — mavi halka sadece touchpad */
                     holder.cursorView?.visibility =
-                        if (controlEnabled) View.VISIBLE else View.GONE
+                        if (controlEnabled && inputMode == InputMode.TOUCHPAD) View.VISIBLE
+                        else View.GONE
                     holder.applyViewTransform()
                     holder.syncCursorView()
                 },
@@ -983,7 +992,10 @@ private class ControlGestureState {
     var lastPanX = 0f
     var lastPanY = 0f
     var lastTapUpAt = 0L
+    var lastTapX = 0.5f
+    var lastTapY = 0.5f
     var longPressPosted = false
+    var pendingSingleClick: Runnable? = null
 
     fun reset() {
         movedFar = false
@@ -1000,6 +1012,7 @@ private class ControlGestureState {
         panX = 0f
         panY = 0f
         lastTapUpAt = 0L
+        pendingSingleClick = null
     }
 }
 
@@ -1007,12 +1020,15 @@ private const val TAP_SLOP_PX = 48f
 /** Touchpad: ekran genisliginin tamamini kaydirmak ≈ masaustunun bu kadari. */
 private const val TOUCHPAD_GAIN = 2.4f
 private const val LONG_PRESS_MS = 480L
+private const val DOUBLE_TAP_MS = 320L
+private const val DOUBLE_CLICK_GAP_MS = 45L
+private const val DOUBLE_TAP_POS = 0.045f
 
 /**
  * AnyDesk / TeamViewer mobil jestleri:
- * - Touchpad: kaydir = imlec (goreli, kucuk ekranda her yere ulasilir), dokun = sol tik,
+ * - Touchpad: kaydir = imlec (goreli), dokun = sol tik, cift dokun = cift tik (klasor ac),
  *   basili tut = sag tik, 2 parmak kaydir = tekerlek, pinch = zoom
- * - Dogrudan: dokundugun yer = imlec (mutlak)
+ * - Dogrudan: dokundugun yer = imlec (mutlak) — Windows imleciyle ayni nokta
  * - Surukle modu: basili sol tus
  */
 private fun controlTouchListener(
@@ -1025,6 +1041,8 @@ private fun controlTouchListener(
         if (!g.movedFar && !g.multiTouch && holder.touchMode == TouchMode.NORMAL) {
             g.longPressPosted = false
             g.movedFar = true /* UP'ta sol tik atmasin */
+            g.pendingSingleClick?.let { holder.touch?.removeCallbacks(it) }
+            g.pendingSingleClick = null
             val x = holder.cursorX.toDouble()
             val y = holder.cursorY.toDouble()
             onControl(ControlPayload(ControlPayload.MOUSE_MOVE, x = x, y = y))
@@ -1047,6 +1065,17 @@ private fun controlTouchListener(
         holder.cursorX = (holder.cursorX + dxPx / viewW * TOUCHPAD_GAIN).coerceIn(0f, 1f)
         holder.cursorY = (holder.cursorY + dyPx / viewH * TOUCHPAD_GAIN).coerceIn(0f, 1f)
         holder.syncCursorView()
+    }
+
+    fun fireLeftClick(x: Double, y: Double) {
+        onControl(ControlPayload(ControlPayload.MOUSE_MOVE, x = x, y = y))
+        onControl(ControlPayload(ControlPayload.MOUSE_DOWN, x = x, y = y, b = "left"))
+        onControl(ControlPayload(ControlPayload.MOUSE_UP, x = x, y = y, b = "left"))
+    }
+
+    fun fireDoubleClick(v: View, x: Double, y: Double) {
+        fireLeftClick(x, y)
+        v.postDelayed({ fireLeftClick(x, y) }, DOUBLE_CLICK_GAP_MS)
     }
 
     return View.OnTouchListener { v, event ->
@@ -1214,15 +1243,29 @@ private fun controlTouchListener(
                     }
                     !g.movedFar && mode == TouchMode.NORMAL -> {
                         val now = android.os.SystemClock.uptimeMillis()
-                        if (now - g.lastTapUpAt < 280L && g.scale > 1.05f) {
-                            holder.fitReset()
-                            holder.syncCursorView()
+                        val nearPrev = abs(holder.cursorX - g.lastTapX) < DOUBLE_TAP_POS &&
+                            abs(holder.cursorY - g.lastTapY) < DOUBLE_TAP_POS
+                        val isDouble = now - g.lastTapUpAt < DOUBLE_TAP_MS && nearPrev
+                        if (isDouble) {
+                            g.pendingSingleClick?.let { v.removeCallbacks(it) }
+                            g.pendingSingleClick = null
                             g.lastTapUpAt = 0L
+                            /* Explorer klasor/disk: iki tik kisa aralikla */
+                            fireDoubleClick(v, x, y)
                         } else {
                             g.lastTapUpAt = now
-                            onControl(ControlPayload(ControlPayload.MOUSE_MOVE, x = x, y = y))
-                            onControl(ControlPayload(ControlPayload.MOUSE_DOWN, x = x, y = y, b = "left"))
-                            onControl(ControlPayload(ControlPayload.MOUSE_UP, x = x, y = y, b = "left"))
+                            g.lastTapX = holder.cursorX
+                            g.lastTapY = holder.cursorY
+                            /* Cift dokunus beklerken tek tiki geciktir — yoksa Explorer acmaz */
+                            g.pendingSingleClick?.let { v.removeCallbacks(it) }
+                            val clickX = x
+                            val clickY = y
+                            val pending = Runnable {
+                                g.pendingSingleClick = null
+                                fireLeftClick(clickX, clickY)
+                            }
+                            g.pendingSingleClick = pending
+                            v.postDelayed(pending, DOUBLE_TAP_MS)
                         }
                     }
                 }
