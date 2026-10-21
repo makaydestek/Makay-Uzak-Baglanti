@@ -14,8 +14,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import android.content.Intent
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import com.makay.remote.session.SessionController
 import com.makay.remote.session.SessionViewModel
 import com.makay.remote.ui.screens.ConnectingScreen
@@ -34,6 +36,7 @@ import com.makay.remote.ui.theme.MakayTheme
 @Composable
 fun RemoteApp(vm: SessionViewModel) {
     val c = MakayTheme.c
+    val context = LocalContext.current
     val state by vm.state.collectAsState()
     val diagnostics by vm.diagnostics.collectAsState()
     val joinHint by vm.joinHint.collectAsState()
@@ -83,6 +86,7 @@ fun RemoteApp(vm: SessionViewModel) {
                             mqttBroker = vm.settings.mqttBroker,
                             publicTurnFallback = vm.settings.publicTurnFallback,
                             preferRelay = vm.settings.preferRelay,
+                            requireControlApproval = vm.settings.requireControlApproval,
                             turnUrl = vm.settings.turnUrl,
                             turnUser = vm.settings.turnUser,
                             turnPass = vm.settings.turnPass,
@@ -94,6 +98,7 @@ fun RemoteApp(vm: SessionViewModel) {
                             onMqttBroker = { vm.settings.mqttBroker = it },
                             onPublicTurnFallback = { vm.settings.publicTurnFallback = it },
                             onPreferRelay = { vm.settings.preferRelay = it },
+                            onRequireControlApproval = { vm.settings.requireControlApproval = it },
                             onTurnUrl = { vm.settings.turnUrl = it },
                             onTurnUser = { vm.settings.turnUser = it },
                             onTurnPass = { vm.settings.turnPass = it },
@@ -106,6 +111,18 @@ fun RemoteApp(vm: SessionViewModel) {
                             onClearTrusted = {
                                 vm.clearTrustedDevices()
                                 settingsTick++
+                            },
+                            onShareCrashLog = {
+                                val intent = com.makay.remote.rtc.CrashLog.shareIntent(context)
+                                if (intent != null) {
+                                    context.startActivity(Intent.createChooser(intent, "Çökme kaydı"))
+                                } else {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "Paylaşılacak çökme kaydı yok",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
                             },
                             onBack = { showSettings = false }
                         )

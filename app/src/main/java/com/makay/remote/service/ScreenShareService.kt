@@ -66,6 +66,7 @@ class ScreenShareService : Service() {
 
         if (resultCode == 0 || resultData == null) {
             Log.w(TAG, "Gecerli MediaProjection sonucu yok — servis duruyor")
+            notifyShareFailed("Ekran paylaşımı izni alınamadı")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -75,6 +76,7 @@ class ScreenShareService : Service() {
         val peer = PeerRegistry.current
         if (peer == null) {
             Log.w(TAG, "Aktif baglanti yok — servis duruyor")
+            notifyShareFailed("Ekran paylaşımı başlatılamadı — aktif bağlantı yok")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -85,9 +87,17 @@ class ScreenShareService : Service() {
             Log.i(TAG, "Ekran paylasimi basladi")
         } catch (e: Exception) {
             Log.w(TAG, "Paylasim baslatilamadi: ${e.message}")
+            notifyShareFailed("Ekran paylaşımı başlatılamadı: ${e.message ?: "bilinmeyen hata"}")
             stopSelf()
         }
         return START_NOT_STICKY
+    }
+
+    private fun notifyShareFailed(message: String) {
+        runCatching {
+            android.widget.Toast.makeText(applicationContext, message, android.widget.Toast.LENGTH_LONG).show()
+        }
+        failureListener?.invoke(message)
     }
 
     private fun startSharing(resultCode: Int, data: Intent, peer: PeerBridge) {
@@ -244,6 +254,8 @@ class ScreenShareService : Service() {
         const val EXTRA_RESULT_DATA = "makay.result_data"
 
         @Volatile private var instance: ScreenShareService? = null
+
+        @Volatile var failureListener: ((String) -> Unit)? = null
 
         /** Adaptive: 0=tam, 1=%75, 2=%50 — host ekran paylasirken. */
         fun applyAdaptiveTier(tier: Int) {

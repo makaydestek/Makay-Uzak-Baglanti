@@ -28,9 +28,6 @@
     <!--titreşim (dokunma geri bildirimi) -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- Bildirim kalıcılığı -->
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-
     <!-- Sistem klavyesi tuş kodları eşlemesi için -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />

@@ -194,6 +194,7 @@ class SessionController(
     private var acceptOfferJob: Job? = null
     private var reconnectJob: Job? = null
     private var softResubJob: Job? = null
+    private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
     /** MQTT fan-out callback'lerini tek siraya al (offer + bye yarisi). */
     private val signalMutex = Mutex()
 
@@ -220,6 +221,12 @@ class SessionController(
      * DUSURUYORDU; simdi tamponlanip peer olusturulunca uygulanir.
      */
     private val pendingIceBeforePeer = IceInbox()
+
+    init {
+        com.makay.remote.service.ScreenShareService.failureListener = { msg ->
+            emitToast(msg, "error")
+        }
+    }
 
     /** Uzak videoyu gosteren renderer icin Egl baglami. */
     fun eglContext(): EglBase.Context? = peer?.eglContext()
@@ -252,10 +259,14 @@ class SessionController(
         } catch (e: Exception) {
             Log.w(TAG, "Eslesme agina ulasilamadi: ${e.message}")
             reset(keepSignal = false)
-            _state.value = State.Failed("Eşleşme ağına ulaşılamadı — internet bağlantınızı kontrol edin")
+            _state.value = State.Failed(
+                e.message?.takeIf { it.contains("eşleşme", ignoreCase = true) || it.contains("deneme") }
+                    ?: "Eşleşme ağına ulaşılamadı — internet bağlantınızı kontrol edin"
+            )
             return ""
         }
 
+        registerNetworkCallback()
         _state.value = State.Hosting(code, pwd, invite)
         return code
     }
@@ -374,7 +385,10 @@ class SessionController(
             } catch (e: Exception) {
                 Log.w(TAG, "Eslesme agina ulasilamadi: ${e.message}")
                 reset(keepSignal = false)
-                _state.value = State.Failed("Eşleşme ağına ulaşılamadı — internet bağlantınızı kontrol edin")
+                _state.value = State.Failed(
+                    e.message?.takeIf { it.contains("deneme", ignoreCase = true) }
+                        ?: "Eşleşme ağına ulaşılamadı — internet bağlantınızı kontrol edin"
+                )
                 return
             }
         }
@@ -389,6 +403,7 @@ class SessionController(
         reconnectAttempts = 0
         autoTurnTried = false
         connectedOnce = false
+        registerNetworkCallback()
         startJoinRetries()
     }
 
@@ -739,8 +754,13 @@ class SessionController(
                 val p = peer
                 if (p != null) {
                     p.requestControl()
-                    _controlState.value = ControlState.GRANTED
-                    emitToast("Kontrol etkin — ekrana dokunarak bilgisayarı yönetin", "success")
+                    if (settings.requireControlApproval) {
+                        _controlState.value = ControlState.REQUESTED
+                        emitToast("Kontrol izni isteniyor — Windows onayını bekleyin", "info")
+                    } else {
+                        _controlState.value = ControlState.GRANTED
+                        emitToast("Kontrol etkin — ekrana dokunarak bilgisayarı yönetin", "success")
+                    }
                 } else {
                     _controlState.value = ControlState.NONE
                 }
@@ -1087,6 +1107,7 @@ class SessionController(
         intentionalClose = true
         reconnectJob?.cancel()
         softResubJob?.cancel()
+        unregisterNetworkCallback()
         val hostingRoom = room
         scope.launch {
             if (asHost && hostingRoom.isNotEmpty()) {
@@ -1096,6 +1117,30 @@ class SessionController(
             if (!settings.rememberPassword) settings.clearSession()
             intentionalClose = false
         }
+    }
+
+    /** Wi‑Fi ↔ LTE gecisinde MQTT soft-resub. */
+    private fun registerNetworkCallback() {
+        if (networkCallback != null) return
+        val cm = appContext.getSystemService(android.net.ConnectivityManager::class.java) ?: return
+        val cb = object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) {
+                val st = _state.value
+                if (intentionalClose) return
+                if (st is State.Idle || st is State.Failed) return
+                softResubscribeSignal()
+            }
+        }
+        runCatching { cm.registerDefaultNetworkCallback(cb) }
+            .onSuccess { networkCallback = cb }
+            .onFailure { Log.w(TAG, "NetworkCallback kayit edilemedi: ${it.message}") }
+    }
+
+    private fun unregisterNetworkCallback() {
+        val cb = networkCallback ?: return
+        networkCallback = null
+        val cm = appContext.getSystemService(android.net.ConnectivityManager::class.java) ?: return
+        runCatching { cm.unregisterNetworkCallback(cb) }
     }
 
     /** Soft keyboard: metni Windows'a tek tek unicode karakter olarak gonderir. */
@@ -1174,6 +1219,7 @@ class SessionController(
         softResubJob = null
         reconnectJob?.cancel()
         reconnectJob = null
+        if (!keepSignal) unregisterNetworkCallback()
         stopLinkMonitor()
         clearConnectTimeout()
         connectedOnce = false
@@ -1214,12 +1260,13 @@ class SessionController(
                 append(peer?.diagText() ?: "peer yok")
                 append(" · 35 sn'de tamamlanamadı")
             }
-            /* Misafir: bir kez otomatik TURN + yeniden join */
-            if (!asHost && !autoTurnTried && reconnectPassword.isNotEmpty()) {
+            /* Misafir: yalnızca kullanıcının TURN adresi varsa yeniden dene.
+               Halka TURN yok (IceConfig boş) — boş publicTurnFallback toast'ı yalan olur. */
+            val hasCustomTurn = settings.turnUrl.isNotBlank()
+            if (!asHost && !autoTurnTried && reconnectPassword.isNotEmpty() && hasCustomTurn) {
                 autoTurnTried = true
                 settings.preferRelay = true
-                settings.publicTurnFallback = true
-                emitToast("Aktarma yolu (TURN) deneniyor…", "info")
+                emitToast("TURN üzerinden yeniden deneniyor…", "info")
                 val inv = reconnectInvite.ifEmpty { room }
                 val pwd = reconnectPassword
                 intentionalClose = true
@@ -1227,7 +1274,11 @@ class SessionController(
                 intentionalClose = false
                 join(inv, pwd)
             } else {
-                emitToast("Bağlantı uzun sürüyor — Ayarlar’dan «Yalnızca TURN» deneyin", "warning")
+                emitToast(
+                    if (hasCustomTurn) "Bağlantı uzun sürüyor — Ayarlar’dan «Yalnızca TURN» deneyin"
+                    else "Bağlantı uzun sürüyor — Ayarlar’dan kendi TURN sunucunuzu girin",
+                    "warning"
+                )
             }
         }
     }

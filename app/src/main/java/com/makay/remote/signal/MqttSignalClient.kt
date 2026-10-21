@@ -3,6 +3,7 @@ package com.makay.remote.signal
 import android.util.Log
 import com.google.gson.Gson
 import com.makay.remote.core.Primitives
+import com.makay.remote.core.RemoteGuard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -46,8 +47,12 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
 
     private var topic: String? = null
     private var pinHash: String = ""
+    private var roomKey: String = ""
     private var listener: SignalChannel.Listener? = null
     private var closeListener: SignalChannel.CloseListener? = null
+
+    /** Windows cloud-signal-bridge ile ayni PIN rate gate. */
+    private val pinGate = RemoteGuard.PinGate(windowMs = 60_000L, maxAttempts = 10)
 
     /** Kendi yayinlarimizi yoksayabilmek icin. */
     private val selfTag: String = java.util.UUID.randomUUID().toString().take(8)
@@ -104,7 +109,11 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
         this.listener = onMessage
         this.closeListener = onClose
         this.pinHash = Primitives.sha256Hex(password)
+        this.roomKey = room.trim().uppercase()
         this.topic = topicFor(room)
+        if (!pinGate.allow("$roomKey:open")) {
+            error("Çok fazla eşleşme denemesi — bir dakika bekleyin")
+        }
 
         /* FAN-OUT (masaustu köprüsüyle ayni strateji): ULASTIGIMIZ TUM
            broker'lara baglanip hepsine yayin yapariz.
@@ -271,10 +280,14 @@ class MqttSignalClient(private val customBroker: String? = null) : SignalChannel
         // Kendi mesajimizi yoksay
         if (env.from != null && env.from == selfTag) return
 
-        // PIN dogrulama
+        // PIN dogrulama (+ rate gate — yanlis pin flood)
         if (pinHash.isNotEmpty()) {
             val remote = env.pinHash?.lowercase()
-            if (remote.isNullOrEmpty() || remote != pinHash) return
+            if (remote.isNullOrEmpty() || remote != pinHash) {
+                pinGate.allow("$roomKey:badpin")
+                return
+            }
+            pinGate.reset("$roomKey:badpin")
         }
 
         // Yinelenen mesajlari ele — gonderen bazinda `seq` tabanli (bkz.

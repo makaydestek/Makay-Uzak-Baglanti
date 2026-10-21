@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import com.makay.remote.BuildConfig
+import com.makay.remote.core.IceConfig
 
 /**
  * MAKAY Remote — kalici ayarlar ve cihaz kimligi.
@@ -283,8 +284,18 @@ class SettingsStore(context: Context) {
     var publicTurnFallback: Boolean
         get() = publicTurnState.value
         set(v) {
-            publicTurnState.value = v
-            prefs.edit().putBoolean(KEY_PUBLIC_TURN, v).apply()
+            // Halka TURN yokken acik tutmak yaniltici — yine de tercihi sakla
+            publicTurnState.value = v && IceConfig.hasBuiltInTurnFallback()
+            prefs.edit().putBoolean(KEY_PUBLIC_TURN, publicTurnState.value).apply()
+        }
+
+    /** Misafir baglaninca Windows onayini bekle (AIO requireControlApproval). */
+    private val requireControlState = boolState(KEY_REQUIRE_CONTROL, false)
+    var requireControlApproval: Boolean
+        get() = requireControlState.value
+        set(v) {
+            requireControlState.value = v
+            prefs.edit().putBoolean(KEY_REQUIRE_CONTROL, v).apply()
         }
 
     private val mqttBrokerState = stringState(KEY_MQTT_BROKER, "")
@@ -354,6 +365,7 @@ class SettingsStore(context: Context) {
         private const val KEY_VIDEO_QUALITY = "video_quality"
         private const val KEY_PREFER_RELAY = "prefer_relay"
         private const val KEY_PUBLIC_TURN = "public_turn"
+        private const val KEY_REQUIRE_CONTROL = "require_control_approval"
         private const val KEY_MQTT_BROKER = "mqtt_broker"
         private const val KEY_TURN_URL = "turn_url"
         private const val KEY_TURN_USER = "turn_user"

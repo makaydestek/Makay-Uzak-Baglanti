@@ -778,21 +778,56 @@ class PeerBridge(
 
     private fun sendBinary(bytes: ByteArray): Boolean = doSendBytes(bytes, preferBinary = true)
 
+    /**
+     * DataChannel gönderimi — UI/ANR güvenli.
+     * Ana iş parçacığında `runOnRtcBlocking` YOK: kuyruğa alıp RTC thread'de boşaltır.
+     * Kanal açıksa hemen true döner (dokunuş yolu bloklanmaz).
+     */
     private fun doSendBytes(bytes: ByteArray, preferBinary: Boolean): Boolean {
         if (channel == null || closed) return false
-        return try {
-            RtcEngine.runOnRtcBlocking(8) {
-                val ch = channel ?: return@runOnRtcBlocking false
-                synchronized(sendLock) {
-                    if (closed) return@synchronized false
-                    val state = runCatching { ch.state() }.getOrNull() ?: return@synchronized false
-                    if (state != DataChannel.State.OPEN) return@synchronized false
-                    val order = if (preferBinary) listOf(true, false) else listOf(false, true)
-                    for (asBinary in order) {
-                        if (trySendBytes(ch, bytes, asBinary)) return@synchronized true
-                    }
-                    false
+        if (RtcEngine.isOnRtcThread()) {
+            return sendBytesOnRtc(bytes, preferBinary)
+        }
+        val ch = channel ?: return false
+        val state = runCatching { ch.state() }.getOrNull() ?: return false
+        if (state != DataChannel.State.OPEN) return false
+        sendQueue.offer(QueuedSend(bytes.copyOf(), preferBinary))
+        scheduleSendDrain()
+        return true
+    }
+
+    private data class QueuedSend(val bytes: ByteArray, val preferBinary: Boolean)
+
+    private val sendQueue = java.util.concurrent.ConcurrentLinkedQueue<QueuedSend>()
+    private val drainScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private fun scheduleSendDrain() {
+        if (!drainScheduled.compareAndSet(false, true)) return
+        RtcEngine.post {
+            try {
+                while (true) {
+                    val item = sendQueue.poll() ?: break
+                    sendBytesOnRtc(item.bytes, item.preferBinary)
                 }
+            } finally {
+                drainScheduled.set(false)
+                if (sendQueue.isNotEmpty()) scheduleSendDrain()
+            }
+        }
+    }
+
+    private fun sendBytesOnRtc(bytes: ByteArray, preferBinary: Boolean): Boolean {
+        return try {
+            val ch = channel ?: return false
+            synchronized(sendLock) {
+                if (closed) return false
+                val state = runCatching { ch.state() }.getOrNull() ?: return false
+                if (state != DataChannel.State.OPEN) return false
+                val order = if (preferBinary) listOf(true, false) else listOf(false, true)
+                for (asBinary in order) {
+                    if (trySendBytes(ch, bytes, asBinary)) return true
+                }
+                false
             }
         } catch (t: Throwable) {
             CrashLog.write("doSendBytes: ${t.message}")

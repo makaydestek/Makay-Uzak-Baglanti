@@ -70,9 +70,13 @@ object IceConfig {
             hasTurn = true
         }
 
-        if (!hasTurn && includeDefaultTurn) {
+        // Varsayilan TURN listesi bos — bos Server eklemek ICE'yi bozar.
+        if (!hasTurn && includeDefaultTurn && DEFAULT_TURN_URLS.isNotEmpty()) {
             out.add(Server(DEFAULT_TURN_URLS, DEFAULT_TURN_USER, DEFAULT_TURN_PASS))
         }
         return out
     }
+
+    /** Kullaniciya sunulacak halka TURN var mi? (su an yok). */
+    fun hasBuiltInTurnFallback(): Boolean = DEFAULT_TURN_URLS.isNotEmpty()
 }

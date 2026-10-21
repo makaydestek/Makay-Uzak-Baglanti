@@ -76,12 +76,9 @@ android {
             ndk {
                 abiFilters += listOf("armeabi-v7a", "arm64-v8a")
             }
-            // Mevcut kurulumlar debug anahtariyla guncelleniyor. Uretim anahtari
-            // local.properties'te yoksa bu zinciri kirmamak icin debug imza kalir.
-            signingConfig = if (hasReleaseKey) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            // Uretim imzasi zorunlu — debug anahtarla release ship edilmez.
+            if (hasReleaseKey) {
+                signingConfig = signingConfigs.getByName("release")
             }
         }
         debug {
@@ -245,6 +242,15 @@ tasks.register("publishReleaseApk") {
 afterEvaluate {
     tasks.named("assembleRelease").configure {
         finalizedBy("publishReleaseApk")
+    }
+    listOf("packageRelease", "assembleRelease", "publishReleaseApk").forEach { name ->
+        tasks.matching { it.name == name }.configureEach {
+            doFirst {
+                check(hasReleaseKey) {
+                    "Release imza yok. local.properties icinde RELEASE_STORE_FILE / PASSWORD / KEY_ALIAS / KEY_PASSWORD tanimlayin."
+                }
+            }
+        }
     }
 }
 

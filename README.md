@@ -5,7 +5,7 @@ bağlantı uygulaması. Bilgisayar ekranını telefonda görür, dokunarak kontr
 eder, dosya gönderir ve yazışır.
 
 - **Paket adı:** `com.makay.remote`
-- **Sürüm:** `VERSION.txt` (şu an `1.0.5`)
+- **Sürüm:** `VERSION.txt` (şu an `1.0.53`)
 - **Gereksinim:** Android 8.0 (API 26) ve üzeri
 - **Eşlenik masaüstü tarafı:** `Makay AIO` → *Uzak Bağlantı* (`apps/remote`)
 

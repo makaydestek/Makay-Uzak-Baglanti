@@ -76,6 +76,7 @@ fun SettingsScreen(
     mqttBroker: String,
     publicTurnFallback: Boolean,
     preferRelay: Boolean,
+    requireControlApproval: Boolean = false,
     turnUrl: String,
     turnUser: String,
     turnPass: String,
@@ -87,6 +88,7 @@ fun SettingsScreen(
     onMqttBroker: (String) -> Unit,
     onPublicTurnFallback: (Boolean) -> Unit,
     onPreferRelay: (Boolean) -> Unit,
+    onRequireControlApproval: (Boolean) -> Unit = {},
     onTurnUrl: (String) -> Unit,
     onTurnUser: (String) -> Unit,
     onTurnPass: (String) -> Unit,
@@ -94,6 +96,7 @@ fun SettingsScreen(
     onVideoQuality: (String) -> Unit = {},
     onUntrust: ((String) -> Unit)? = null,
     onClearTrusted: (() -> Unit)? = null,
+    onShareCrashLog: (() -> Unit)? = null,
     onBack: () -> Unit
 ) {
     val c = MakayTheme.c
@@ -249,11 +252,24 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(12.dp))
 
-        SwitchRow(
+                SwitchRow(
             title = "Açık TURN yedeği",
-            subtitle = "Özel TURN yoksa halka açık TURN sunucusu eklenir",
+            subtitle = if (com.makay.remote.core.IceConfig.hasBuiltInTurnFallback())
+                "Özel TURN yoksa yerleşik yedek eklenir"
+            else
+                "Şu an yerleşik halka TURN yok — kendi sunucunuzu girin",
             checked = publicTurnFallback,
             onCheckedChange = onPublicTurnFallback,
+            c = c
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        SwitchRow(
+            title = "Kontrol için Windows onayı",
+            subtitle = "Açıkken misafir bağlanınca Windows onayı beklenir (AIO ile aynı)",
+            checked = requireControlApproval,
+            onCheckedChange = onRequireControlApproval,
             c = c
         )
 
@@ -299,6 +315,18 @@ fun SettingsScreen(
         // uygulama ici indirme + imza/SHA-256 dogrulamasi -> sistem kurulum
         // ekrani. Tarayiciya YONLENDIRME YAPILMAZ.
         UpdateCheckButton(c, updateVm, updateState)
+
+        if (onShareCrashLog != null) {
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = { onShareCrashLog.invoke() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+            ) {
+                Text("Çökme kaydını paylaş", style = MaterialTheme.typography.titleSmall, color = c.text)
+            }
+        }
 
         Spacer(Modifier.height(16.dp))
 
