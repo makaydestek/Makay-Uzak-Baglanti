@@ -117,9 +117,9 @@ destek senaryosudur ve **hiçbir özel izin gerektirmez.**
 **Kontrol akışı:**
 
 1. Telefonda **Kontrol İste** düğmesine dokunun
-2. Kontrol **anında** etkinleşir — bilgisayar tarafı onay adımı beklemez
-   (odayı açan taraf zaten izin vermiş sayılır)
-3. Ekrana dokunun / sürükleyin
+2. Varsayılan: kontrol **anında** etkinleşir. Ayarlarda «Kontrol için Windows
+   onayı» açıksa bilgisayar tarafında **İzin Ver** beklenir.
+3. Ekrana dokunun / sürükleyin; tuş şeridi veya **Yaz…** ile klavye kullanın
 4. Bırakmak için **Kontrolü Bırak**
 
 **Ne yapılır:**
@@ -127,10 +127,11 @@ destek senaryosudur ve **hiçbir özel izin gerektirmez.**
 | Telefon hareketi | Bilgisayarda |
 |---|---|
 | Dokunma | Sol tık |
-| Sürükleme | Basılı sol tıkla sürükleme (pencere taşıma, alan seçimi) |
-
-**Sınırlar:** Yalnızca fare; klavye girdisi yoktur, kaydırma (tekerlek) ve
-sağ tık henüz yoktur.
+| Çift dokunma | Çift tık (klasör/disk açma) |
+| Uzun basış | Sağ tık |
+| Sürükleme | Basılı sol tıkla sürükleme |
+| İki parmak kaydırma | Fare tekerleği |
+| Tuş şeridi / Yaz… | Klavye (Esc, Win, Ctrl+C/V, Alt+Tab, Win+L…) |
 
 > Telefon → bilgisayar yönünde ekran paylaşımını da tersine çevirebilirsiniz:
 > telefon **Oda Aç** ile kendi ekranını paylaşır, bilgisayar yalnızca

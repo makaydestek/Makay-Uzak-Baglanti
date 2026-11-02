@@ -20,6 +20,8 @@ data class WireEnvelope(
     @SerializedName("sid") val sid: String? = null,
     @SerializedName("name") val name: String? = null,
     @SerializedName("h") val hash: String? = null,
+    /** Tel protokol sürümü — `Primitives.WIRE_PROTOCOL` / `engine.js:WIRE_PROTOCOL`. */
+    @SerializedName("pv") val protocolVersion: Int? = null,
 
     // text
     @SerializedName("text") val text: String? = null,
@@ -33,6 +35,8 @@ data class WireEnvelope(
     @SerializedName("fid") val fid: String? = null,
     @SerializedName("size") val size: Long? = null,
     @SerializedName("mime") val mime: String? = null,
+    /** Opsiyonel dosya SHA-256 (küçük harf hex); eski istemciler yok sayar. */
+    @SerializedName("sha256") val sha256: String? = null,
 
     // kontrol
     @SerializedName("ev") val ev: ControlPayload? = null,

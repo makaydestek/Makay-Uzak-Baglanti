@@ -252,22 +252,27 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(12.dp))
 
-                SwitchRow(
-            title = "Açık TURN yedeği",
-            subtitle = if (com.makay.remote.core.IceConfig.hasBuiltInTurnFallback())
-                "Özel TURN yoksa yerleşik yedek eklenir"
-            else
-                "Şu an yerleşik halka TURN yok — kendi sunucunuzu girin",
-            checked = publicTurnFallback,
-            onCheckedChange = onPublicTurnFallback,
-            c = c
-        )
-
-        Spacer(Modifier.height(12.dp))
+        if (com.makay.remote.core.IceConfig.hasBuiltInTurnFallback()) {
+            SwitchRow(
+                title = "Açık TURN yedeği",
+                subtitle = "Özel TURN yoksa yerleşik yedek eklenir",
+                checked = publicTurnFallback,
+                onCheckedChange = onPublicTurnFallback,
+                c = c
+            )
+            Spacer(Modifier.height(12.dp))
+        } else {
+            Text(
+                "Yerleşik halka TURN yoktur. Farklı ağlarda bağlanmak için aşağıya Windows ile aynı özel TURN bilgilerini girin.",
+                style = MaterialTheme.typography.bodySmall,
+                color = c.muted
+            )
+            Spacer(Modifier.height(12.dp))
+        }
 
         SwitchRow(
             title = "Kontrol için Windows onayı",
-            subtitle = "Açıkken misafir bağlanınca Windows onayı beklenir (AIO ile aynı)",
+            subtitle = "Açıkken «Kontrol İste» sonrası Windows onayı beklenir. Kapalıysa misafir kontrolü hemen alır (AIO ile aynı).",
             checked = requireControlApproval,
             onCheckedChange = onRequireControlApproval,
             c = c

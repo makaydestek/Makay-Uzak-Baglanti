@@ -49,7 +49,8 @@ class FileTransferEngine {
         val name: String,
         val size: Long,
         val mime: String,
-        val total: Int
+        val total: Int,
+        val sha256: String? = null
     ) {
         /* Sabit uzunluklu dizi yerine dinamik liste: parca sirasi disindan
            gelirse veya toplam bilinmiyorsa AIOOBE uretmez. */
@@ -115,25 +116,42 @@ class FileTransferEngine {
            cagiriyordu — iptal hiic zamaninda yakalanamazdi.) */
         sending[fid] = false
         val total = chunkCount(file.length())
-        /* FILE_META'da `name` ZORUNLU: alici dosyayi bu adla kaydeder. */
-        emit(gsonOf(WireEnvelope(type = WireEnvelope.FILE_META, fid = fid, name = file.name, size = file.length(), mime = mime)).toByteArray())
-
+        /* Once dosyayi oku + SHA-256 hesapla; FILE_META'ya hash ekle (Windows ile ayni). */
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val parts = ArrayList<ByteArray>(total.coerceAtLeast(1))
         file.inputStream().use { input ->
             val buffer = ByteArray(Primitives.DEFAULT_CHUNK_SIZE)
-            var seq = 0
-            var transferred = 0L
             while (true) {
                 val read = input.read(buffer)
                 if (read <= 0) break
-                val slice = if (read == buffer.size) buffer else buffer.copyOf(read)
-                emit(buildChunk(fid, seq, total, slice))
-                transferred += read
-                seq++
-                listener?.onProgress(Progress(fid, file.name, transferred, file.length(), percent(transferred, file.length())))
-                if (sending[fid] == true) { // iptal edildi
-                    sending.remove(fid)
-                    return fid
-                }
+                val slice = if (read == buffer.size) buffer.copyOf() else buffer.copyOf(read)
+                digest.update(slice)
+                parts.add(slice)
+            }
+        }
+        val sha = bytesToHex(digest.digest())
+        /* FILE_META'da `name` ZORUNLU: alici dosyayi bu adla kaydeder. */
+        emit(
+            gsonOf(
+                WireEnvelope(
+                    type = WireEnvelope.FILE_META,
+                    fid = fid,
+                    name = file.name,
+                    size = file.length(),
+                    mime = mime,
+                    sha256 = sha
+                )
+            ).toByteArray()
+        )
+
+        var transferred = 0L
+        for ((seq, slice) in parts.withIndex()) {
+            emit(buildChunk(fid, seq, total, slice))
+            transferred += slice.size
+            listener?.onProgress(Progress(fid, file.name, transferred, file.length(), percent(transferred, file.length())))
+            if (sending[fid] == true) { // iptal edildi
+                sending.remove(fid)
+                return fid
             }
         }
 
@@ -164,7 +182,8 @@ class FileTransferEngine {
                 val size = env.size ?: 0L
                 incoming[env.fid.orEmpty()] = Entry(
                     env.name.orEmpty(), size, env.mime.orEmpty(),
-                    chunkCount(size)
+                    chunkCount(size),
+                    env.sha256?.takeIf { it.length == 64 }
                 )
                 if (size == 0L) {
                     incoming.remove(env.fid)?.let { listener?.onComplete(Received(env.fid.orEmpty(), it.name, it.mime, 0, ByteArray(0))) }
@@ -225,11 +244,29 @@ class FileTransferEngine {
             System.arraycopy(c, 0, buf, pos, c.size)
             pos += c.size
         }
+        val expected = e.sha256
+        if (!expected.isNullOrEmpty()) {
+            val got = Primitives.sha256HexBytes(buf)
+            if (!got.equals(expected, ignoreCase = true)) {
+                listener?.onError("Dosya bütünlüğü doğrulanamadı: ${e.name}")
+                return
+            }
+        }
         listener?.onComplete(Received(fid, e.name, e.mime, e.size, buf))
     }
 
     private fun percent(transferred: Long, size: Long): Int =
         if (size > 0) minOf(100, ((transferred * 100) / size).toInt()) else 100
+
+    private fun bytesToHex(bytes: ByteArray): String {
+        val sb = StringBuilder(bytes.size * 2)
+        for (b in bytes) {
+            val v = b.toInt() and 0xFF
+            sb.append("0123456789abcdef"[v ushr 4])
+            sb.append("0123456789abcdef"[v and 0x0F])
+        }
+        return sb.toString()
+    }
 
     companion object {
         private val gson = com.makay.remote.core.WireJson.gson

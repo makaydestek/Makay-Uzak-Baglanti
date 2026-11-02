@@ -847,7 +847,11 @@ class SessionController(
         }
 
         override fun onError(message: String) {
-            emitToast(message, "error")
+            val level = if (
+                message.contains("protokol", ignoreCase = true) ||
+                message.contains("bütünlük", ignoreCase = true)
+            ) "warning" else "error"
+            emitToast(message, level)
         }
 
         override fun onFileProgress(p: FileTransferEngine.Progress) {

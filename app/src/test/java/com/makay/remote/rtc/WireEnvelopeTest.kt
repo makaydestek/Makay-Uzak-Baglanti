@@ -26,7 +26,8 @@ class WireEnvelopeTest {
                 type = WireEnvelope.HELLO,
                 sid = "abc123",
                 name = "Teknisyen",
-                hash = "e3b0c442"
+                hash = "e3b0c442",
+                protocolVersion = com.makay.remote.core.Primitives.WIRE_PROTOCOL
             )
         )
         val map = gson.fromJson(json, Map::class.java)
@@ -34,9 +35,15 @@ class WireEnvelopeTest {
         assertEquals("abc123", map["sid"])
         assertEquals("Teknisyen", map["name"])
         assertEquals("e3b0c442", map["h"])
+        assertEquals(1.0, (map["pv"] as Number).toDouble(), 0.0)
         // Windows `envelope(t,obj)` `t` anahtarini ekler — bos alanlar yayilmaz
         assertFalse(map.containsKey("text"))
         assertFalse(map.containsKey("ev"))
+    }
+
+    @Test
+    fun wireProtocolConstant_isPositiveAndStable() {
+        assertEquals(1, com.makay.remote.core.Primitives.WIRE_PROTOCOL)
     }
 
     @Test
@@ -157,7 +164,8 @@ class WireEnvelopeTest {
                 fid = "abcd1234",
                 name = "rapor.pdf",
                 size = 2048L,
-                mime = "application/pdf"
+                mime = "application/pdf",
+                sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
             )
         )
         val map = gson.fromJson(json, Map::class.java)
@@ -166,6 +174,10 @@ class WireEnvelopeTest {
         assertEquals("rapor.pdf", map["name"])
         assertEquals(2048.0, (map["size"] as Number).toDouble(), 0.0)
         assertEquals("application/pdf", map["mime"])
+        assertEquals(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            map["sha256"]
+        )
     }
 
     @Test

@@ -151,7 +151,7 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
     LaunchedEffect(controlState) {
         if (controlState == SessionController.ControlState.GRANTED) {
             showHint = true
-            delay(3500)
+            delay(7000)
             showHint = false
         }
     }
@@ -248,8 +248,8 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
                 text = when {
                     touchMode == TouchMode.DRAG -> "Sürükle · basılı kaydırın"
                     inputMode == InputMode.TOUCHPAD ->
-                        "Touchpad · kaydır=imleç · dokun=tık · çift dokun=aç · basılı=sağ tık"
-                    else -> "Doğrudan · dokun=tık · çift dokun=klasör/disk aç · basılı=sağ tık"
+                        "Touchpad · kaydır=imleç · dokun=tık · çift dokun=aç · basılı=sağ tık · 2 parmak=tekerlek"
+                    else -> "Doğrudan · dokun=tık · çift dokun=aç · basılı=sağ tık · 2 parmak=tekerlek"
                 },
                 color = Color.White,
                 style = MaterialTheme.typography.labelSmall,
@@ -577,37 +577,60 @@ fun SessionScreen(vm: SessionViewModel, peerName: String, asHost: Boolean) {
 
     if (showKeyboard) {
         AlertDialog(
-            onDismissRequest = { showKeyboard = false },
+            onDismissRequest = {
+                keyboardText = ""
+                showKeyboard = false
+            },
             containerColor = c.bg2,
-            title = { Text("Uzak klavye", color = c.text) },
+            title = { Text("Uzak klavye (canlı)", color = c.text) },
             text = {
-                OutlinedTextField(
-                    value = keyboardText,
-                    onValueChange = { keyboardText = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Yazıp gönderin…", color = c.muted) },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = c.accent,
-                        unfocusedBorderColor = c.cardBorder,
-                        focusedTextColor = c.text,
-                        unfocusedTextColor = c.text
+                Column {
+                    Text(
+                        "Yazdıkça Windows’a anında gider. Silmek için ⌫ kullanın.",
+                        color = c.muted,
+                        style = MaterialTheme.typography.bodySmall
                     )
-                )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = keyboardText,
+                        onValueChange = { new ->
+                            when {
+                                new.length > keyboardText.length -> {
+                                    vm.typeText(new.substring(keyboardText.length))
+                                }
+                                new.length < keyboardText.length -> {
+                                    repeat(keyboardText.length - new.length) {
+                                        vm.sendNamedKey("backspace")
+                                    }
+                                }
+                            }
+                            keyboardText = new
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Buraya yazın…", color = c.muted) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = c.accent,
+                            unfocusedBorderColor = c.cardBorder,
+                            focusedTextColor = c.text,
+                            unfocusedTextColor = c.text
+                        )
+                    )
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        if (keyboardText.isNotEmpty()) {
-                            vm.typeText(keyboardText)
-                            keyboardText = ""
-                        }
+                        keyboardText = ""
                         showKeyboard = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = c.primary)
-                ) { Text("Gönder") }
+                ) { Text("Tamam") }
             },
             dismissButton = {
-                TextButton(onClick = { showKeyboard = false }) {
+                TextButton(onClick = {
+                    keyboardText = ""
+                    showKeyboard = false
+                }) {
                     Text("Kapat", color = c.muted)
                 }
             }
@@ -699,23 +722,28 @@ private fun KeyStrip(
     onType: () -> Unit,
     c: com.makay.remote.ui.theme.MakayColors
 ) {
-    val keys = listOf(
+    /* Windows apps/remote/index.html#keyStrip ile aynı set — senkron tutulmalı */
+    val row1 = listOf(
         "Esc" to "escape",
         "Tab" to "tab",
         "Win" to "win",
         "⌫" to "backspace",
         "↵" to "enter",
+        "Del" to "delete"
+    )
+    val row2 = listOf(
         "↑" to "arrowup",
         "↓" to "arrowdown",
         "←" to "arrowleft",
-        "→" to "arrowright"
+        "→" to "arrowright",
+        "F5" to "f5"
     )
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            keys.forEach { (label, name) ->
+            row1.forEach { (label, name) ->
                 OutlinedButton(
                     onClick = { onKey(name) },
                     modifier = Modifier.weight(1f),
@@ -730,31 +758,58 @@ private fun KeyStrip(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            OutlinedButton(
-                onClick = { onChord(arrayOf("control", "c")) },
-                modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
-            ) { Text("Ctrl+C", style = MaterialTheme.typography.labelSmall) }
-            OutlinedButton(
-                onClick = { onChord(arrayOf("control", "v")) },
-                modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
-            ) { Text("Ctrl+V", style = MaterialTheme.typography.labelSmall) }
-            OutlinedButton(
-                onClick = { onChord(arrayOf("control", "a")) },
-                modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
-            ) { Text("Ctrl+A", style = MaterialTheme.typography.labelSmall) }
-            OutlinedButton(
-                onClick = { onChord(arrayOf("control", "z")) },
-                modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
-            ) { Text("Ctrl+Z", style = MaterialTheme.typography.labelSmall) }
+            row2.forEach { (label, name) ->
+                OutlinedButton(
+                    onClick = { onKey(name) },
+                    modifier = Modifier.weight(1f),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                ) {
+                    Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                }
+            }
             OutlinedButton(
                 onClick = onType,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1.2f),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
             ) { Text("Yaz…", style = MaterialTheme.typography.labelSmall, color = c.accent) }
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            listOf(
+                "Ctrl+C" to arrayOf("control", "c"),
+                "Ctrl+V" to arrayOf("control", "v"),
+                "Ctrl+A" to arrayOf("control", "a"),
+                "Ctrl+Z" to arrayOf("control", "z"),
+                "Ctrl+S" to arrayOf("control", "s")
+            ).forEach { (label, chord) ->
+                OutlinedButton(
+                    onClick = { onChord(chord) },
+                    modifier = Modifier.weight(1f),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 2.dp)
+                ) { Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1) }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            listOf(
+                "Alt+Tab" to arrayOf("alt", "tab"),
+                "Alt+F4" to arrayOf("alt", "f4"),
+                "Win+D" to arrayOf("win", "d"),
+                "Win+L" to arrayOf("win", "l"),
+                "Görev" to arrayOf("control", "shift", "escape")
+            ).forEach { (label, chord) ->
+                OutlinedButton(
+                    onClick = { onChord(chord) },
+                    modifier = Modifier.weight(1f),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 2.dp)
+                ) { Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1) }
+            }
         }
     }
 }

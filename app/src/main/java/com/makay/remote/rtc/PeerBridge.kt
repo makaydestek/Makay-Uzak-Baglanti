@@ -81,6 +81,24 @@ class PeerBridge(
     var listener: Listener? = null
     val files = FileTransferEngine()
 
+    init {
+        /* Dosya olaylarini SessionController peerListener'a ilet (SHA-256 hata dahil) */
+        files.listener = object : FileTransferEngine.Listener {
+            override fun onProgress(p: FileTransferEngine.Progress) {
+                notifyListener { onFileProgress(p) }
+            }
+            override fun onComplete(file: FileTransferEngine.Received) {
+                notifyListener { onFileComplete(file) }
+            }
+            override fun onCancel(fid: String) {
+                notifyListener { onFileCancel(fid) }
+            }
+            override fun onError(message: String) {
+                notifyListener { onError(message) }
+            }
+        }
+    }
+
     private val gson = com.makay.remote.core.WireJson.gson
     private var pc: PeerConnection? = null
     private var channel: DataChannel? = null
@@ -613,7 +631,8 @@ class PeerBridge(
             type = WireEnvelope.HELLO,
             sid = sessionId,
             name = deviceName,
-            hash = Primitives.sha256Hex(password)
+            hash = Primitives.sha256Hex(password),
+            protocolVersion = Primitives.WIRE_PROTOCOL
         ))
     }
 
@@ -648,7 +667,17 @@ class PeerBridge(
                 helloReceived = true
                 peerName = env.name.orEmpty().ifEmpty { "Karşı taraf" }
                 peerReady = true
-                CrashLog.breadcrumb("HELLO OK peer=$peerName")
+                val peerPv = env.protocolVersion
+                if (peerPv != null && peerPv > Primitives.WIRE_PROTOCOL) {
+                    CrashLog.breadcrumb("HELLO pv uyarısı peer=$peerPv local=${Primitives.WIRE_PROTOCOL}")
+                    notifyListener {
+                        onError(
+                            "Karşı taraf daha yeni protokol kullanıyor (pv=$peerPv). " +
+                                "Her iki uygulamayı da güncelleyin."
+                        )
+                    }
+                }
+                CrashLog.breadcrumb("HELLO OK peer=$peerName pv=${peerPv ?: "?"}")
                 /* Kendi HELLO'muz henuz gitmediyse hemen dene (Windows ready bekler). */
                 channel?.let { maybeSendHello(it) }
                 notifyListener { onReady(peerName) }

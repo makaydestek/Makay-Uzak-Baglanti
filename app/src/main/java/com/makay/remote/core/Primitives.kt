@@ -17,6 +17,13 @@ object Primitives {
     const val CODE_PREFIX = "MAKAY"
     const val CODE_VERSION = 1
 
+    /**
+     * DataChannel tel protokol sürümü (`hello.pv`).
+     * Alan eklemek geriye uyumludur; bilinmeyen yüksek `pv` yalnızca uyarıdır.
+     * Masaüstü `engine.js:WIRE_PROTOCOL` ile birebir aynı olmalı.
+     */
+    const val WIRE_PROTOCOL = 1
+
     const val DEFAULT_CHUNK_SIZE = 64 * 1024
 
     /**
@@ -66,9 +73,12 @@ object Primitives {
     }
 
     /** Kucuk harf 64 haneli SHA-256 — `engine.js:sha256Hex` ile ayni. */
-    fun sha256Hex(value: String): String {
+    fun sha256Hex(value: String): String = sha256HexBytes(value.toByteArray(Charsets.UTF_8))
+
+    /** Dosya bütünlüğü için ham bayt SHA-256 (`engine.js:sha256HexBytes`). */
+    fun sha256HexBytes(bytes: ByteArray): String {
         val md = MessageDigest.getInstance("SHA-256")
-        val digest = md.digest(value.toByteArray(Charsets.UTF_8))
+        val digest = md.digest(bytes)
         val sb = StringBuilder(digest.size * 2)
         for (b in digest) {
             val v = b.toInt() and 0xFF
