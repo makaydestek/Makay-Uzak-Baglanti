@@ -304,9 +304,10 @@ set "MAP=%APK_DIR%\MakayRemote_v!VERSION!-mapping.txt"
 REM Standart yayin metni (MakayCleaner / Makay Video Player ile ayni sade bicim).
 REM Changelog / "neler degisti" yazilmaz — yalnizca uygulama adi + surum.
 set "REL_TITLE=MakayRemote v!VERSION!"
-set "REL_NOTES=Yayin: MakayRemote v!VERSION!"
+REM Cleaner ile ayni: release aciklamasi bos (diyalogda yalnizca standart metin).
+set "REL_NOTES="
 set "NOTES_FILE=%TEMP%\makay-remote-release-notes.txt"
-> "!NOTES_FILE!" echo !REL_NOTES!
+type nul > "!NOTES_FILE!"
 
 REM Var olan tum assetleri topla: APK + SHA-256 + R8 haritasi.
 set "ASSETS="
@@ -333,7 +334,7 @@ if not "!REL_ERR!"=="0" (
 )
 echo  [OK] https://github.com/%REPO%/releases/tag/!TAG!
 echo  [OK] Baslik: !REL_TITLE!
-echo  [OK] Not   : !REL_NOTES!
+echo  [OK] Not   : (bos - Cleaner standart)
 echo.
 
 echo Eski GitHub surumleri siliniyor (yalnizca !TAG! kalir)...

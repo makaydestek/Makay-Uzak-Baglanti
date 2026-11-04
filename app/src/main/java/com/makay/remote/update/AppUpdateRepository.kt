@@ -95,7 +95,8 @@ class AppUpdateRepository(context: Context) {
             versionName = versionName,
             apkUrl = apkUrl,
             apkName = apkName,
-            releaseNotes = release.optString("body", "").trim().take(1200),
+            // Cleaner ile aynı diyalog: release body gösterilmez.
+            releaseNotes = "",
             htmlUrl = release.optString("html_url", "https://github.com/$owner/$repo/releases/latest"),
             expectedSha256 = expectedSha,
             expectedSizeBytes = apkSize.takeIf { it > 0 }
