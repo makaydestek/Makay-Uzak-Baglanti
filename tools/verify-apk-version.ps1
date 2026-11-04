@@ -1,11 +1,14 @@
 # APK icindeki versionName'in VERSION.txt ile ayni oldugunu dogrular.
-# Kullanim: powershell -File tools\verify-apk-version.ps1 -ApkPath APK\MakayCleaner_v1.0.94.apk -ExpectedVersion 1.0.94
+# aapt.exe Unicode yollari (or. ...\MakayUzaktanBaglantı\...) acamaz;
+# bu yuzden APK gecici ASCII bir klasore kopyalanir.
+# Kullanim: powershell -File tools\verify-apk-version.ps1 -ApkPath APK\x.apk -ExpectedVersion 1.0.94
 param(
     [Parameter(Mandatory = $true)][string]$ApkPath,
     [Parameter(Mandatory = $true)][string]$ExpectedVersion
 )
 
 $ErrorActionPreference = 'Stop'
+$ApkPath = [System.IO.Path]::GetFullPath($ApkPath)
 if (-not (Test-Path -LiteralPath $ApkPath)) {
     Write-Error "APK yok: $ApkPath"
     exit 1
@@ -32,10 +35,24 @@ if (-not $aapt) {
     exit 0
 }
 
-$out = & $aapt dump badging $ApkPath 2>$null | Out-String
+# aapt: yalnizca ASCII yol. Turkce karakterli proje klasoru icin temp kopya.
+$tmpDir = Join-Path $env:TEMP ('makay-aapt-' + [guid]::NewGuid().ToString('N'))
+$tmpApk = Join-Path $tmpDir 'app.apk'
+try {
+    New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
+    Copy-Item -LiteralPath $ApkPath -Destination $tmpApk -Force
+
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $out = & $aapt dump badging $tmpApk 2>&1 | Out-String
+    $ErrorActionPreference = $prevEap
+} finally {
+    Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $m = [regex]::Match($out, "versionName='([^']+)'")
 if (-not $m.Success) {
-    Write-Error "APK versionName okunamadi: $ApkPath"
+    Write-Error "APK versionName okunamadi: $ApkPath`n$out"
     exit 1
 }
 $actual = $m.Groups[1].Value.Trim()
