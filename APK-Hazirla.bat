@@ -94,6 +94,11 @@ if errorlevel 1 (
     echo [HATA] git bulunamadi.  winget install Git.Git
     goto :END_FAIL
 )
+if not exist "%~dp0tool\git_commit.cmd" (
+    echo [HATA] tool\git_commit.cmd yok - yayin kimligi kurulamadi.
+    goto :END_FAIL
+)
+call "%~dp0tool\git_identity.cmd"
 where gh >nul 2>&1
 if errorlevel 1 (
     echo [HATA] GitHub CLI ^(gh^) bulunamadi.
@@ -133,10 +138,10 @@ REM ============================================================
 git add -A >nul 2>&1
 git diff --cached --quiet >nul 2>&1
 if errorlevel 1 (
-    git commit -m "MakayRemote v!VERSION!: birikimli guncelleme" >nul 2>&1
+    call "%~dp0tool\git_commit.cmd" -m "MakayRemote v!VERSION!: birikimli guncelleme" >nul 2>&1
     if errorlevel 1 (
         echo [HATA] Commit basarisiz.
-        git commit -m "MakayRemote v!VERSION!: birikimli guncelleme"
+        call "%~dp0tool\git_commit.cmd" -m "MakayRemote v!VERSION!: birikimli guncelleme"
         goto :END_FAIL
     )
     for /f "delims=" %%H in ('git rev-parse --short HEAD 2^>nul') do set "C1=%%H"
@@ -201,6 +206,8 @@ if not exist "!APK_TARGET!" (
     echo  !APK_TARGET!
     goto :END_FAIL
 )
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%\tools\verify-apk-version.ps1" -ApkPath "!APK_TARGET!" -ExpectedVersion "!VERSION!"
+if errorlevel 1 goto :END_FAIL
 if not exist "!SHA_TARGET!" (
     echo [UYARI] SHA dosyasi yok, olusturuluyor...
     powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -235,15 +242,15 @@ if exist "%APK_DIR%\MakayRemote_v!VERSION!-mapping.txt" (
 echo.
 
 REM ============================================================
-echo [5/6] Depoya yayinlaniyor (git commit + push)...
+echo [5/6] Depoya yayinlaniyor (git commit --trailer "Co-authored-by: Cursor <cursoragent@cursor.com>" + push)...
 REM ============================================================
 git add "VERSION.txt" >nul 2>&1
 git diff --cached --quiet -- "VERSION.txt" >nul 2>&1
 if errorlevel 1 (
-    git commit -m "Yayin: MakayRemote v!VERSION!" -- "VERSION.txt" >nul 2>&1
+    call "%~dp0tool\git_commit.cmd" -m "Yayin: MakayRemote v!VERSION!" -- "VERSION.txt" >nul 2>&1
     if errorlevel 1 (
         echo [HATA] Surum commit'i basarisiz.
-        git commit -m "Yayin: MakayRemote v!VERSION!" -- "VERSION.txt"
+        call "%~dp0tool\git_commit.cmd" -m "Yayin: MakayRemote v!VERSION!" -- "VERSION.txt"
         goto :END_FAIL
     )
     for /f "delims=" %%H in ('git rev-parse --short HEAD 2^>nul') do set "C2=%%H"
@@ -334,7 +341,7 @@ set "TAGS_FILE=%TEMP%\makay-remote-tags.txt"
 set "ALL_TAGS=%TEMP%\makay-all-tags.txt"
 
 REM Tum release tag'leri (limit yuksek — eski surumler birikmesin).
-gh release list --repo %REPO% --limit 100 --json tagName -q ".[].tagName" > "!TAGS_FILE!" 2>nul
+gh release list --repo %REPO% --limit 200 --json tagName -q ".[].tagName" > "!TAGS_FILE!" 2>nul
 if exist "!TAGS_FILE!" (
     for /f "usebackq delims=" %%T in ("!TAGS_FILE!") do (
         if /i not "%%T"=="!TAG!" (

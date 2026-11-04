@@ -114,7 +114,9 @@ fun AppUpdateHost(
                             "Kurulumdan önce paket adı, imza ve (varsa) SHA-256 doğrulanır.",
                         color = c.muted
                     )
-                    if (update.releaseNotes.isNotBlank()) {
+                    if (update.releaseNotes.isNotBlank() &&
+                        !update.releaseNotes.equals("null", ignoreCase = true)
+                    ) {
                         Text(
                             update.releaseNotes,
                             color = c.muted

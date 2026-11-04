@@ -85,6 +85,10 @@ class AppUpdateRepository(context: Context) {
         }
 
         val expectedSha = resolveExpectedSha256(release, apkName)
+            ?: error(
+                "Yeni sürüm $versionName bulundu fakat SHA-256 özeti okunamadı. " +
+                    "Release’te .apk.sha256 asset’ini kontrol edin."
+            )
 
         return AvailableUpdate(
             tag = tag,
